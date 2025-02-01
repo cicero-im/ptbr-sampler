@@ -1,4 +1,4 @@
-# Gerador de Nomes, Localizações e Documentos Brasileiros
+# Gerador de Nomes, Localizações e Documentos Brasileiros Realistas
 
 Este pacote fornece uma solução completa para gerar amostras realísticas de nomes, localizações e documentos brasileiros com base em dados populacionais e estatísticas históricas.
 
