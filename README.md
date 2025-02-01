@@ -275,38 +275,44 @@ print(result)
 Este projeto está licenciado sob a MIT License.
 ---
 
+# Brazilian Names, Locations and Documents Generator
 
+This package provides a complete solution for generating realistic Brazilian names, locations, and documents based on population data and historical naming statistics. It is designed to be used by developers looking to generate sample data for testing and development purposes.
 
-Brazilian Names, Locations and Documents Generator
+---
 
-This package provides a complete solution for generating realistic Brazilian names, locations, and documents based on population data and historical naming statistics. It is designed to be used both as a Python library and via a command-line interface (CLI). One of the key features of this package is its ability to return results in dictionaries, making it easy to integrate with other systems and workflows.
+## Table of Contents
 
-Table of Contents
-	•	Overview
-	•	Project Structure
-	•	Main Features
-	•	Brazilian Location Sampler
-	•	Brazilian Name Sampler
-	•	RG Generator
-	•	Document Sampler
-	•	Document Utilities
-	•	Command-Line Interface (CLI)
-	•	Returning Data as Dictionaries
-	•	Testing and Validation
-	•	Installation and Dependencies
-	•	Usage Examples
-	•	License
+- [Overview](#overview)
+- [Project Structure](#project-structure)
+- [Main Features](#main-features)
+  - [Brazilian Location Sampler](#brazilian-location-sampler)
+  - [Brazilian Name Sampler](#brazilian-name-sampler)
+  - [RG Generator](#rg-generator)
+  - [Document Sampler](#document-sampler)
+  - [Document Utilities](#document-utilities)
+- [Command-Line Interface (CLI)](#command-line-interface-cli)
+- [Returning Data as Dictionaries](#returning-data-as-dictionaries)
+- [Testing and Validation](#testing-and-validation)
+- [Installation and Dependencies](#installation-and-dependencies)
+- [Usage Examples](#usage-examples)
+- [License](#license)
 
-Overview
+---
+
+## Overview
 
 The package enables you to generate:
-	•	Brazilian Locations: Randomly select states and cities based on population percentages; generate CEPs (postal codes) either randomly or from specified ranges; and format the output flexibly.
-	•	Brazilian Names: Select first names and surnames (with options to include middle names or use only surnames) based on historical and statistical data.
-	•	Brazilian Documents: Generate valid numbers for CPF, PIS, CNPJ, CEI, and RG using dedicated utility functions and state-specific rules.
-	•	Structured Output: Many functions, especially via the CLI, return results as standardized dictionaries with keys like name, middle_name, surnames, city, state, state_abbr, cep, cpf, rg, etc., making the data easy to use and integrate.
+- **Brazilian Locations:** Randomly select states and cities based on population percentages; generate CEPs (postal codes) either randomly or from specified ranges; and format the output flexibly.
+- **Brazilian Names:** Select first names and surnames (with options to include middle names or use only surnames) based on historical and statistical data.
+- **Brazilian Documents:** Generate valid numbers for CPF, PIS, CNPJ, CEI, and RG using dedicated utility functions and state-specific rules.
+- **Structured Output:** Many functions, especially via the CLI, return results as standardized dictionaries with keys like name, middle_name, surnames, city, state, state_abbr, cep, cpf, rg, etc.
 
-Project Structure
+---
 
+## Project Structure
+
+```plaintext
 src
 ├── br_location_class.py         # Class for sampling Brazilian locations
 ├── br_name_class.py             # Class for sampling Brazilian names and time period enumeration
@@ -321,80 +327,93 @@ src
     ├── cei.py                   # CEI functions
     ├── util.py                  # Helper functions for cleaning and padding IDs
     └── __init__.py
+```
 
-The tests/ directory includes unit tests (using pytest) to ensure the correct functionality of every component.
+The `tests/` directory includes unit tests (using `pytest`) to ensure the correct functionality of every component.
 
-Main Features
+---
 
-Brazilian Location Sampler
-	•	Class: BrazilianLocationSampler
-	•	Features:
-	•	Loads city and state data from a JSON file.
-	•	Pre-calculates weights based on population percentages for efficient sampling.
-	•	Methods to return:
-	•	A random state (name and abbreviation) based on population weights.
-	•	A random city, optionally restricted to a given state.
-	•	A complete combination (state, abbreviation, and city).
-	•	Generation and formatting of CEPs with options to include or omit the dash.
-	•	Example Output (Complete Location):
+## Main Features
 
-São Paulo, São Paulo (SP), 01000-000
+### Brazilian Location Sampler
 
+- **Class:** `BrazilianLocationSampler`
+- **Features:**
+  - Loads city and state data from a JSON file.
+  - Pre-calculates weights based on population percentages for efficient sampling.
+  - Methods to return:
+    - A random state (name and abbreviation) based on population weights.
+    - A random city, optionally restricted to a given state.
+    - A complete combination (state, abbreviation, and city).
+    - Generation and formatting of CEPs with options to include or omit the dash.
+  - **Example Output (Complete Location):**
+    ```plaintext
+    São Paulo, São Paulo (SP), 01000-000
+    ```
 
+### Brazilian Name Sampler
 
-Brazilian Name Sampler
-	•	Class: BrazilianNameSampler
-	•	Features:
-	•	Loads first names, surnames, and optionally middle names from JSON files.
-	•	Supports selection of names based on different historical time periods (e.g., ate2010).
-	•	Offers options such as:
-	•	Generating names in uppercase (raw) or in title case.
-	•	Including or excluding surnames.
-	•	Generating only surnames or only middle names.
-	•	Utilizing a “top 40” list of surnames.
-	•	Return Options:
-	•	Returns the full name as a string or as a NameComponents instance containing first_name, middle_name, and surname.
+- **Class:** `BrazilianNameSampler`
+- **Features:**
+  - Loads first names, surnames, and optionally middle names from JSON files.
+  - Supports selection of names based on different historical time periods (e.g., `ate2010`).
+  - Offers options such as:
+    - Generating names in uppercase (raw) or in title case.
+    - Including or excluding surnames.
+    - Generating only surnames or only middle names.
+    - Utilizing a "top 40" list of surnames.
+  - **Return Options:**
+    - Returns the full name as a string or as a `NameComponents` instance containing `first_name`, `middle_name`, and `surname`.
 
-RG Generator
-	•	Class: BrazilianRG
-	•	Features:
-	•	Generates RG numbers following state-specific formats (e.g., inclusion of dots, dashes, and optional state prefixes or issuer codes).
-	•	Options to include the issuing authority (e.g., SSP-SP or DETRAN-RJ) or to generate only the raw RG number.
+### RG Generator
 
-Document Sampler
-	•	Class: DocumentSampler
-	•	Features:
-	•	Uses utility functions to generate valid numbers for:
-	•	CPF: Formatted as XXX.XXX.XXX-XX.
-	•	PIS: In the format XXX.XXXXX.XX-X.
-	•	CNPJ: Formatted as XX.XXX.XXX/XXXX-XX.
-	•	CEI: Formatted as XX.XXX.XXXXX/XX.
-	•	RG: Generated using the state-specific generator.
+- **Class:** `BrazilianRG`
+- **Features:**
+  - Generates RG numbers following state-specific formats (e.g., inclusion of dots, dashes, and optional state prefixes or issuer codes).
+  - Options to include the issuing authority (e.g., `SSP-SP` or `DETRAN-RJ`) or to generate only the raw RG number.
 
-Document Utilities
+### Document Sampler
 
-Each document type has its own module in src/utils/:
-	•	CPF, PIS, CNPJ, CEI: Contain functions for cleaning, validating, calculating check digits, formatting, and generating random valid numbers.
+- **Class:** `DocumentSampler`
+- **Features:**
+  - Uses utility functions to generate valid numbers for:
+    - **CPF:** Formatted as XXX.XXX.XXX-XX.
+    - **PIS:** In the format XXX.XXXXX.XX-X.
+    - **CNPJ:** Formatted as XX.XXX.XXX/XXXX-XX.
+    - **CEI:** Formatted as XX.XXX.XXXXX/XX.
+    - **RG:** Generated using the state-specific generator.
 
-Command-Line Interface (CLI)
-	•	File: cli.py
-	•	Description:
-	•	Built with Typer to create a robust CLI.
-	•	Displays results in well-formatted tables using Rich.
-	•	Offers a wide range of options/flags to control output, such as:
-	•	Generating only names, only locations, only documents, or combinations thereof.
-	•	Customizing CEP formatting (with or without dash).
-	•	Selecting the historical time period for name sampling.
-	•	Including or excluding details in document outputs.
-	•	Output: Results are displayed in an interactive table and internally converted to standardized dictionaries via the parse_result function.
+### Document Utilities
 
-Returning Data as Dictionaries
+Each document type has its own module in `src/utils/`:
+- **CPF, PIS, CNPJ, CEI:** Contain functions for cleaning, validating, calculating check digits, formatting, and generating random valid numbers.
+
+---
+
+## Command-Line Interface (CLI)
+
+- **File:** `cli.py`
+- **Description:**
+  - Built with Typer to create a robust CLI.
+  - Displays results in well-formatted tables using Rich.
+  - Offers a wide range of options/flags to control output, such as:
+    - Generating only names, only locations, only documents, or combinations thereof.
+    - Customizing CEP formatting (with or without dash).
+    - Selecting the historical time period for name sampling.
+    - Including or excluding details in document outputs.
+  - **Output:** Results are displayed in an interactive table and internally converted to standardized dictionaries via the `parse_result` function.
+
+---
+
+## Returning Data as Dictionaries
 
 A core feature of the package is its ability to return multiple items as dictionaries. This is especially useful for:
-	•	Integration with APIs and external systems.
-	•	Further processing or automation workflows.
-	•	The CLI’s parse_result function converts raw sample data into a dictionary with keys such as:
+- Integration with APIs and external systems.
+- Further processing or automation workflows.
 
+When the CLI function is called (e.g., through the command `sample`), the results are converted using the `parse_result` function, structuring the output as follows:
+
+```python
 {
     "name": "João",
     "middle_name": "Pedro",
@@ -407,58 +426,78 @@ A core feature of the package is its ability to return multiple items as diction
     "rg": "SSP-SP 12.345.678-9"
     // Additional entries may include PIS, CNPJ, CEI, etc.
 }
+```
 
-	•	Sample Quantity:
-	•	If a single sample is generated (qty=1), the function returns one dictionary.
-	•	If multiple samples are generated (qty>1), a list of dictionaries is returned.
+- **Sample Quantity:**
+  - If a single sample is generated (`qty=1`), the function returns one dictionary.
+  - If multiple samples are generated (`qty>1`), a list of dictionaries is returned.
 
 This structured approach simplifies the consumption and further processing of the generated data.
 
-Testing and Validation
-	•	The tests/ directory contains comprehensive unit tests to verify:
-	•	Correct sampling of names, locations, and documents.
-	•	Proper formatting and validation of document numbers (CPF, PIS, CNPJ, CEI, RG).
-	•	The behavior and output formatting of the CLI.
-	•	Run tests using:
+---
 
+## Testing and Validation
+
+The `tests/` directory contains comprehensive unit tests to verify:
+- Correct sampling of names, locations, and documents.
+- Proper formatting and validation of document numbers (CPF, PIS, CNPJ, CEI, RG).
+- The behavior and output formatting of the CLI.
+- Run tests using:
+
+```sh
 pytest
+```
 
-Installation and Dependencies
+---
 
-Requirements
-	•	Python 3.9+
-	•	External dependencies:
-	•	Typer
-	•	Rich
-	•	[pytest] (for running tests)
+## Installation and Dependencies
 
-Installation
-	1.	Clone the repository:
+### Requirements
 
+- Python 3.9+
+- External dependencies:
+  - Typer
+  - Rich
+  - pytest (for running tests)
+
+### Installation
+
+1. Clone the repository:
+
+```sh
 git clone https://github.com/your-username/ptbr-sampler.git
 cd ptbr-sampler
+```
 
+2. Install the dependencies (using a virtual environment is recommended):
 
-	2.	Install the dependencies (using a virtual environment is recommended):
-
+```sh
 uv sync
+```
 
-Usage Examples
+---
 
-Via Command-Line Interface
+## Usage Examples
+
+### Via Command-Line Interface
 
 Generate a complete sample (location, name, and documents) and display it in a table:
 
-python -m src.cli sample --qty 1
+```sh
+uv run src.cli sample --qty 1
+```
 
 Generate only documents (e.g., only CPF and RG) for 3 samples:
 
-python -m src.cli sample --only-cpf --only-rg --qty 3
+```sh
+uv run src.cli sample --only-cpf --only-rg --qty 3
+```
 
-Via Python Code
+### Via Python Code
 
 You can use the classes directly in your scripts:
 
+```python
 from src.br_location_class import BrazilianLocationSampler
 from src.br_name_class import BrazilianNameSampler, TimePeriod
 from src.document_sampler import DocumentSampler
@@ -490,7 +529,10 @@ result = {
 }
 
 print(result)
+```
 
-License
+---
+
+## License
 
 This project is licensed under the MIT License.
