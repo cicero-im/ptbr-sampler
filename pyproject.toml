@@ -1,0 +1,129 @@
+[project]
+name = 'name'         
+version = '0.1.0'                  
+description = 'description' 
+authors = [{name = 'arthrod', email = 'arthrod@gmail.com'}]
+requires-python = '>=3.12'         
+keywords = ['xx', 'xx', 'xx', 'x x', 'xxx xx']
+dependencies = [
+    'tqdm',
+    'typer',
+    'python-dotenv',
+	#'aiosmtplib',
+	#'aioimaplib',
+	#'asyncpg',
+	#'litellm',
+	#'openai',
+	#'python-genai',
+	#'PyPDF2',
+	#'python-docx',
+	#'cmi-docx', 
+	#'reportlab', 
+	#'serpapi', 
+	#'crewai',
+	#'crewai-tools',
+	#'markdown2',
+	#'pytz', 
+]
+
+[project.optional-dependencies]
+
+test = [
+    'pytest>=7.0',
+    'pytest-asyncio',
+    'pytest-cov',
+    'pytest-mock',
+    'pytest-timeout',
+    'pytest-xdist',
+    'coverage[toml]',
+  #  'testcontainers',
+  #  'mypy',
+   # 'types-python-dateutil',
+    #'types-redis',
+   # 'types-PyYAML',
+   # 'types-openpyxl',
+   # 'types-python-jose',
+    #'types-passlib',
+]
+
+dev = [
+    'uv',
+    'ruff',
+	#'jupyterlab',
+	#'nbdev',
+	#'fastai',
+	#'jupyterlab-quarto',
+	#'ipykernel',
+]
+
+[build-system]
+requires = ['hatchling']           
+build-backend = 'hatchling.build'   
+
+[tool.ruff]
+include = [                        
+    'pyproject.toml',
+    'src/**/*.{py,js,jsx,ts,tsx,css,scss,html,sh,yaml,yml}',
+    'scripts/**/*.{py,js,jsx,ts,tsx,css,scss,html,sh,yaml,yml}', 
+]
+line-length = 140
+fix = true
+target-version = 'py312'           
+exclude = ['build', 'dist', '*.egg-info']
+
+         
+[tool.ruff.lint.per-file-ignores]
+'__init__.py' = ['E402']         
+'**/{tests,docs,tools}/*' = ['E402'] 
+'nbs/*' = ['E402', 'F401']  
+
+
+[tool.ruff.format]
+quote-style = 'single'             
+docstring-code-format = true      
+docstring-code-line-length = 'dynamic'  
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true         
+
+[tool.hatch.build.targets.wheel]
+packages = ['src']                 
+
+[tool.mypy]
+python_version = '3.12'           
+strict = true      
+no_implicit_optional = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = [
+    'openai.*',
+    'google.*',
+    'PyPDF2.*',
+    'litellm.*',
+    'crewai.*',
+    'serpapi.*',
+    'aiosmtplib.*',
+    'aioimaplib.*',
+	'tests.*',
+]
+disable_error_code = ['union-attr', 'arg-type']
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+addopts = '--cov=src'
+
+[tool.nbdev]
+lib_path = "src"
+nbs_path = "nbs"
+recursive = true
+toc = true
+clean_ids = true
+black_formatting = false  
+
+[tool.ruff.lint]
+ignore = ['TRY401', 'TRY300', 'G202', 'G004', 'ISC001', 'W191', 'COM812', 'W292', 'C408', 'COM819', 'E731', 'ERA001', 'G004', 'RET503', 'RUF012', 'S311', 'SIM108', 'SIM300', 'T201', 'TRY003', 'TRY301', 'W293']
+select = ['A', 'ASYNC', 'B', 'BLE', 'C4', 'COM', 'DTZ', 'E', 'ERA', 'EXE', 'F', 'FLY', 'G', 'I', 'ICN', 'ISC', 'LOG', 'PERF', 'PIE', 'PLC', 'PLE', 'PLW', 'PT', 'PTH', 'RET', 'RUF', 'S', 'SIM', 'T', 'TRY', 'UP', 'W']
+unfixable = ['B']        
