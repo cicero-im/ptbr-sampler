@@ -24,8 +24,8 @@ dependencies = [
     #'crewai-tools',
     #'markdown2',
     #'pytz',
-    "duckdb>=1.1.3",
-    "ibis-framework[duckdb]",
+   # "duckdb>=1.1.3",
+    #"ibis-framework[duckdb]",
     "rich>=13.9.4",
     "pytest-cov>=6.0.0",
 ]
