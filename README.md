@@ -1,25 +1,25 @@
 # Gerador de Nomes, Localizações e Documentos Brasileiros
 
-Este pacote fornece uma solução completa para gerar amostras realísticas de nomes, localizações e documentos brasileiros com base em dados populacionais e estatísticas históricas. Ele foi projetado para ser utilizado tanto via biblioteca Python quanto através de uma interface de linha de comando (CLI). Um dos grandes diferenciais do pacote é sua capacidade de retornar os resultados de forma estruturada em **dicionários**, facilitando a integração com outros sistemas e fluxos de trabalho.
+Este pacote fornece uma solução completa para gerar amostras realísticas de nomes, localizações e documentos brasileiros com base em dados populacionais e estatísticas históricas.
 
 ---
 
 ## Sumário
 
-- [Visão Geral](#vis%C3%A3o-geral)
+- [Visão Geral](#visão-geral)
 - [Estrutura do Projeto](#estrutura-do-projeto)
 - [Funcionalidades Principais](#funcionalidades-principais)
-  - [Amostrador de Localizações Brasileiras](#amostrador-de-localiza%C3%A7%C3%B5es-brasileiras)
+  - [Amostrador de Localizações Brasileiras](#amostrador-de-localizações-brasileiras)
   - [Amostrador de Nomes Brasileiros](#amostrador-de-nomes-brasileiros)
   - [Gerador de RG](#gerador-de-rg)
   - [Amostrador de Documentos](#amostrador-de-documentos)
-  - [Utilitários para Documentos](#utilit%C3%A1rios-para-documentos)
+  - [Utilitários para Documentos](#utilitários-para-documentos)
 - [Interface de Linha de Comando (CLI)](#interface-de-linha-de-comando-cli)
-- [Retorno de Dados em Dicionários](#retorno-de-dados-em-dicion%C3%A1rios)
-- [Testes e Validação](#testes-e-valida%C3%A7%C3%A3o)
-- [Instalação e Dependências](#instala%C3%A7%C3%A3o-e-depend%C3%AAncias)
+- [Retorno de Dados em Dicionários](#retorno-de-dados-em-dicionários)
+- [Testes e Validação](#testes-e-validação)
+- [Instalação e Dependências](#instalação-e-dependências)
 - [Exemplos de Uso](#exemplos-de-uso)
-- [Licença](#licen%C3%A7a)
+- [Licença](#licença)
 
 ---
 
@@ -29,26 +29,28 @@ O pacote permite gerar:
 - **Localizações brasileiras:** Seleciona estados e cidades com base em porcentagens populacionais; gera CEPs aleatórios ou a partir de intervalos pré-definidos; formata a saída de maneira flexível.
 - **Nomes brasileiros:** Seleciona nomes e sobrenomes (inclusive com opções para incluir nomes do meio ou usar somente sobrenomes) com base em dados históricos e estatísticos.
 - **Documentos brasileiros:** Gera números válidos para CPF, PIS, CNPJ, CEI e RG, utilizando funções utilitárias e regras específicas para cada documento.
-- **Saída estruturada:** As funções de amostragem, especialmente através da CLI, retornam os resultados em dicionários contendo vários itens (nome, local, documentos, etc.), facilitando o uso dos dados gerados em outras aplicações.
+- **Saída estruturada:** As funções de amostragem, especialmente através da CLI, retornam os resultados em dicionários contendo vários itens (nome, local, documentos, etc.), facilitando o uso em scripts e sistemas automatizados.
 
 ---
 
 ## Estrutura do Projeto
 
+```plaintext
 src
 ├── br_location_class.py         # Classe para amostragem de localizações brasileiras
 ├── br_name_class.py             # Classe para amostragem de nomes brasileiros e enumeração de períodos
 ├── br_rg_class.py               # Geração de números de RG conforme os padrões estaduais
 ├── cli.py                       # Interface de linha de comando (Typer + Rich)
 ├── document_sampler.py          # Classe para geração de documentos (CPF, PIS, CNPJ, CEI, RG)
-├── init.py                  # Inicialização do pacote e exportação das principais classes e funções
+├── __init__.py                  # Inicialização do pacote e exportação das principais classes e funções
 └── utils
-├── cpf.py                   # Funções para CPF (validação, formatação, geração)
-├── pis.py                   # Funções para PIS/PASEP
-├── cnpj.py                  # Funções para CNPJ
-├── cei.py                   # Funções para CEI
-├── util.py                  # Funções auxiliares (limpeza e padding de IDs)
-└── init.py
+    ├── cpf.py                   # Funções para CPF (validação, formatação, geração)
+    ├── pis.py                   # Funções para PIS/PASEP
+    ├── cnpj.py                  # Funções para CNPJ
+    ├── cei.py                   # Funções para CEI
+    ├── util.py                  # Funções auxiliares (limpeza e padding de IDs)
+    └── __init__.py
+```
 
 Além dos módulos de código, o diretório **tests** contém diversos testes unitários (utilizando `pytest`) que garantem o funcionamento correto de cada componente do pacote.
 
@@ -68,7 +70,7 @@ Além dos módulos de código, o diretório **tests** contém diversos testes un
     - Combinações completas (estado, abreviação e cidade).
     - Geração e formatação de CEPs, com opções para incluir ou omitir o hífen.
   - **Exemplo de saída (localização completa):**
-    ```
+    ```plaintext
     São Paulo, São Paulo (SP), 01000-000
     ```
 
@@ -105,7 +107,7 @@ Além dos módulos de código, o diretório **tests** contém diversos testes un
     - **CNPJ:** No formato (XX.XXX.XXX/XXXX-XX).
     - **CEI:** No formato (XX.XXX.XXXXX/XX).
     - **RG:** Chamando o gerador de RG, podendo incluir o emissor.
-  
+
 ### Utilitários para Documentos
 
 Cada documento possui seu próprio módulo em `src/utils/`:
@@ -161,58 +163,78 @@ Quando a função CLI é chamada (por exemplo, através do comando `sample`), os
     "rg": "SSP-SP 12.345.678-9"
     // Possíveis entradas adicionais para PIS, CNPJ, CEI, etc.
 }
+```
 
-	•	Quantidade de Amostras:
-	•	Se gerar apenas uma amostra (qty=1), a função retornará um único dicionário.
-	•	Para múltiplas amostras (qty>1), o retorno será uma lista de dicionários.
+- **Quantidade de Amostras:**
+  - Se gerar apenas uma amostra (qty=1), a função retornará um único dicionário.
+  - Para múltiplas amostras (qty>1), o retorno será uma lista de dicionários.
 
 Essa abordagem facilita o consumo dos dados tanto em scripts automatizados quanto em aplicações que requerem uma API de dados estruturados.
 
-Testes e Validação
-	•	O diretório tests/ contém diversos casos de teste que validam:
-	•	A correta amostragem de nomes, localizações e documentos.
-	•	A validação dos formatos dos documentos (CPF, PIS, CNPJ, CEI, RG).
-	•	O comportamento da CLI e a formatação das tabelas de resultados.
-	•	Recomenda-se executar os testes com o comando:
+---
 
+## Testes e Validação
+
+O diretório `tests/` contém diversos casos de teste que validam:
+- A correta amostragem de nomes, localizações e documentos.
+- A validação dos formatos dos documentos (CPF, PIS, CNPJ, CEI, RG).
+- O comportamento da CLI e a formatação das tabelas de resultados.
+- Recomenda-se executar os testes com o comando:
+
+```sh
 pytest
+```
 
-Instalação e Dependências
+---
 
-Requisitos
-	•	Python 3.9+
-	•	Dependências externas:
-	•	Typer
-	•	Rich
-	•	[pytest] (para execução dos testes)
+## Instalação e Dependências
 
-Instalação
-	1.	Clone o repositório:
+### Requisitos
 
+- Python 3.9+
+- Dependências externas:
+  - Typer
+  - Rich
+  - pytest (para execução dos testes)
+
+### Instalação
+
+1. Clone o repositório:
+
+```sh
 git clone https://github.com/seu-usuario/ptbr-sampler.git
 cd ptbr-sampler
+```
 
+2. Instale as dependências (recomenda-se usar um ambiente virtual):
 
-	2.	Instale as dependências (recomenda-se usar um ambiente virtual):
-
+```sh
 uv sync
+```
 
-Exemplos de Uso
+---
 
-Via Linha de Comando
+## Exemplos de Uso
+
+### Via Linha de Comando
 
 Para gerar uma amostra completa (localização, nome e documentos) e exibi-la em uma tabela:
 
+```sh
 uv run src.cli sample --qty 1
+```
 
 Para gerar apenas documentos (por exemplo, somente CPF e RG):
 
-python -m src.cli sample --only-cpf --only-rg --qty 3
+```sh
+uv run src.cli sample --only-cpf --only-rg --qty 3
+```
 
-Via Código Python
+### Via Código Python
 
 Você pode utilizar as classes diretamente em seus scripts:
 
+```python
 from src.br_location_class import BrazilianLocationSampler
 from src.br_name_class import BrazilianNameSampler, TimePeriod
 from src.document_sampler import DocumentSampler
@@ -244,10 +266,16 @@ result = {
 }
 
 print(result)
+```
 
-Licença
+---
+
+## Licença
 
 Este projeto está licenciado sob a MIT License.
+---
+
+
 
 Brazilian Names, Locations and Documents Generator
 
