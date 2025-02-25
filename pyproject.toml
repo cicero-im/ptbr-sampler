@@ -26,6 +26,7 @@ dependencies = [
     #'pytz',
     "rich>=13.9.4",
     "pytest-cov>=6.0.0",
+    "richer>=0.1.6",
 ]
 
 [project.optional-dependencies]
