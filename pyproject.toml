@@ -29,7 +29,7 @@ dependencies = [
     "rich>=13.9.4",
     "pytest-cov>=6.0.0",
     "richer>=0.1.6",
-    "nodejs>=0.1.1",
+
 ]
 
 [project.optional-dependencies]

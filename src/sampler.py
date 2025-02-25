@@ -4,8 +4,11 @@ Brazilian Sample Generator
 Core functionality for generating Brazilian name, location, and document samples.
 """
 
+import asyncio
 import json
 from pathlib import Path
+
+from src.utils.address_for_offline import AddressProvider_for_offline
 
 from .br_location_class import BrazilianLocationSampler
 from .br_name_class import BrazilianNameSampler, NameComponents, TimePeriod
@@ -13,7 +16,11 @@ from .document_sampler import DocumentSampler
 
 
 def parse_result(
-    location: str, name_components: NameComponents, documents: dict[str, str], state_info: tuple[str, str, str] | None = None
+    location: str,
+    name_components: NameComponents,
+    documents: dict[str, str],
+    state_info: tuple[str, str, str] | None = None,
+    address_data: dict | None = None,
 ) -> dict:
     """Parse sample results into a standardized dictionary format.
 
@@ -22,6 +29,7 @@ def parse_result(
         name_components: Named tuple with name components
         documents: Dictionary of document numbers
         state_info: Optional tuple of (state_name, state_abbr, city_name)
+        address_data: Optional dictionary with address data (street, neighborhood, building_number)
 
     Returns:
         dict: Structured dictionary with parsed components
@@ -34,6 +42,9 @@ def parse_result(
         'state': '',
         'state_abbr': '',
         'cep': '',
+        'street': '',
+        'neighborhood': '',
+        'building_number': '',
         'cpf': documents.get('cpf', ''),
         'rg': documents.get('rg', ''),
         'pis': documents.get('pis', ''),
@@ -61,6 +72,20 @@ def parse_result(
         except ValueError:
             pass
 
+    # Add address data if available
+    if address_data:
+        result['street'] = address_data.get('street', '')
+        result['neighborhood'] = address_data.get('neighborhood', '')
+        result['building_number'] = address_data.get('building_number', '')
+
+        # If we have city/state from address_data, use it (API mode)
+        if address_data.get('city'):
+            result['city'] = address_data.get('city', '')
+        if address_data.get('state'):
+            result['state'] = address_data.get('state', '')
+        if address_data.get('cep'):
+            result['cep'] = address_data.get('cep', '')
+
     return result
 
 
@@ -76,6 +101,95 @@ def save_to_jsonl_file(data: list[dict], filename: str) -> None:
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 
+async def get_address_data_batch(ceps: list[str], make_api_call: bool = False) -> list[dict]:
+    """
+    Get address data for multiple CEPs, either from API or generated.
+
+    Args:
+        ceps: List of CEPs to get address data for
+        make_api_call: Whether to make API calls or generate data
+
+    Returns:
+        List of dictionaries with address data (street, neighborhood, building_number)
+    """
+    address_data_list = []
+
+    if make_api_call:
+        # Use cep_wrapper to get real data for multiple CEPs
+        from .utils.cep_wrapper import workers_for_multiple_cep
+
+        # Format CEPs to remove dashes before API call
+        formatted_ceps = [cep.replace('-', '') for cep in ceps]
+
+        # Get data from API
+        cep_data_list = await workers_for_multiple_cep(formatted_ceps)
+
+        # Process each CEP result
+        for cep_data in cep_data_list:
+            address_data = {
+                'street': '',
+                'neighborhood': '',
+                'building_number': '',
+                'cep': cep_data.get('cep', ''),  # This will have the dash format from the API
+                'state': cep_data.get('state', ''),
+                'city': cep_data.get('city', ''),
+            }
+
+            # Extract data from API response if no error
+            if 'error' not in cep_data:
+                address_data['street'] = cep_data.get('street', '')
+                address_data['neighborhood'] = cep_data.get('neighborhood', '')
+
+            # If neighborhood is empty, use address_for_offline
+            if not address_data['neighborhood']:
+                address_provider = AddressProvider_for_offline()
+                address_data['neighborhood'] = address_provider.bairro()
+
+            # If street is empty, use address_for_offline
+            if not address_data['street']:
+                address_provider = AddressProvider_for_offline()
+                address_data['street'] = address_provider.street_prefix() + ' ' + address_provider.last_name()
+
+            # Always get building number from address_for_offline
+            address_provider = AddressProvider_for_offline()
+            address_data['building_number'] = address_provider.building_number()
+
+            address_data_list.append(address_data)
+    else:
+        # Use address_for_offline to generate all data for each CEP
+        for cep in ceps:
+            # Ensure CEP has dash format
+            formatted_cep = cep
+            if '-' not in formatted_cep and len(formatted_cep) == 8:
+                formatted_cep = f'{formatted_cep[:5]}-{formatted_cep[5:]}'
+
+            address_provider = AddressProvider_for_offline()
+            address_data = {
+                'street': address_provider.street_prefix() + ' ' + address_provider.last_name(),
+                'neighborhood': address_provider.bairro(),
+                'building_number': address_provider.building_number(),
+                'cep': formatted_cep,
+            }
+            address_data_list.append(address_data)
+
+    return address_data_list
+
+
+async def get_address_data(cep: str, make_api_call: bool = False) -> dict:
+    """
+    Get address data for a single CEP, either from API or generated.
+
+    Args:
+        cep: The CEP to get address data for
+        make_api_call: Whether to make API calls or generate data
+
+    Returns:
+        Dictionary with address data (street, neighborhood, building_number)
+    """
+    result = await get_address_data_batch([cep], make_api_call)
+    return result[0] if result else {}
+
+
 def sample(
     qty: int,
     q: int | None,
@@ -84,6 +198,7 @@ def sample(
     state_full_only: bool,
     only_cep: bool,
     cep_without_dash: bool,
+    make_api_call: bool,
     time_period: TimePeriod,
     return_only_name: bool,
     name_raw: bool,
@@ -359,17 +474,30 @@ def sample(
 
                 results.append((location, name_components, documents))
 
-        # Modify the results to include state_info for each sample
-        results_with_state_info = []
+        # Collect all CEPs that will be used
+        all_ceps = []
+        all_state_city_info = []
 
         # For all types of generation
         for i in range(actual_qty):
             # Generate a new state and city for each sample
             state_name, state_abbr, city_name = location_sampler.get_state_and_city()
+            all_state_city_info.append((state_name, state_abbr, city_name))
 
             # Get a random CEP for the city
             cep = location_sampler._get_random_cep_for_city(city_name)
             formatted_cep = location_sampler._format_cep(cep, not cep_without_dash)
+            all_ceps.append(formatted_cep)
+
+        # Get address data for all CEPs at once
+        address_data_list = asyncio.run(get_address_data_batch(all_ceps, make_api_call))
+
+        # Modify the results to include state_info and address data
+        results_with_state_info = []
+
+        for i in range(actual_qty):
+            state_name, state_abbr, city_name = all_state_city_info[i]
+            formatted_cep = all_ceps[i]
 
             # Format the full location string with CEP
             # The parse_result function expects the format: "city - cep, state (abbr)"
@@ -383,9 +511,12 @@ def sample(
 
         # Convert results to dictionary format
         parsed_results = []
-        for location, name_components, documents in results_with_state_info:
+        for i, (location, name_components, documents) in enumerate(results_with_state_info):
+            # Get the corresponding address data
+            address_data = address_data_list[i] if i < len(address_data_list) else {}
+
             # Parse the location string to extract city, state, and CEP
-            result_dict = parse_result(location, name_components, documents, state_info=None)
+            result_dict = parse_result(location, name_components, documents, state_info=None, address_data=address_data)
             parsed_results.append(result_dict)
 
         # Save to JSONL if requested

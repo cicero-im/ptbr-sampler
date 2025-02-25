@@ -1,11 +1,12 @@
 import asyncio
+import contextlib
 import json
 import subprocess
 import sys
 from typing import Any
 
 
-async def get_cep_data(cep: str) -> dict[str, Any]:
+async def get_cep_data(cep: str) -> list[dict[str, Any]]:
     """
     Retrieves address information for a single CEP using cep_service.js
     which directly imports from the cep-promise package.
@@ -14,8 +15,8 @@ async def get_cep_data(cep: str) -> dict[str, Any]:
         cep: A CEP (string).
 
     Returns:
-        A dictionary containing the address information.
-        Returns an error dictionary if there is an issue after 100 retry attempts.
+        A list of dictionaries containing the address information.
+        Returns a list with an error dictionary if there is an issue after 100 retry attempts.
     """
     # Ensure cep is a string
     cep = str(cep)
@@ -39,33 +40,33 @@ async def get_cep_data(cep: str) -> dict[str, Any]:
                 error_output = stderr.decode('utf-8').strip() if stderr else 'No error details available'
                 retry_count += 1
                 if retry_count >= max_retries:
-                    return {'error': f'Error calling cep_service.js after {max_retries} retries: {error_output}', 'cep': cep}
+                    return [{'error': f'Error calling cep_service.js after {max_retries} retries: {error_output}', 'cep': cep}]
                 await asyncio.sleep(0.01)  # Small delay between retries
                 continue  # Skip to next iteration
 
             result = json.loads(stdout.decode('utf-8'))
 
-            # If result is a list with one item, return that item
-            if isinstance(result, list) and len(result) == 1:
-                return result[0]
+            # Ensure result is always a list
+            if not isinstance(result, list):
+                return [result]
             return result
 
         except subprocess.CalledProcessError as e:
             retry_count += 1
             if retry_count >= max_retries:
-                return {'error': f'Error calling cep_service.js after {max_retries} retries: {e}', 'cep': cep}
+                return [{'error': f'Error calling cep_service.js after {max_retries} retries: {e}', 'cep': cep}]
             await asyncio.sleep(0.01)  # Small delay between retries
 
         except json.JSONDecodeError as e:
             retry_count += 1
             if retry_count >= max_retries:
-                return {'error': f'Error decoding JSON after {max_retries} retries: {e}', 'cep': cep}
+                return [{'error': f'Error decoding JSON after {max_retries} retries: {e}', 'cep': cep}]
             await asyncio.sleep(0.01)  # Small delay between retries
 
         except Exception as e:
             retry_count += 1
             if retry_count >= max_retries:
-                return {'error': f'Unexpected error after {max_retries} retries: {e!s}', 'cep': cep}
+                return [{'error': f'Unexpected error after {max_retries} retries: {e!s}', 'cep': cep}]
             await asyncio.sleep(0.01)  # Small delay between retries
 
 
@@ -82,6 +83,9 @@ async def workers_for_multiple_cep(ceps: list[str], max_workers: int = 10) -> li
     """
     # Use worker pool approach for individual processing
     queue = asyncio.Queue()
+    # Keep track of CEPs being processed to handle timeouts
+    in_progress = set()
+    worker_timeout = 15  # 15 seconds timeout for workers
 
     # Add all CEPs to the queue
     for cep in ceps:
@@ -97,17 +101,41 @@ async def workers_for_multiple_cep(ceps: list[str], max_workers: int = 10) -> li
                 # Get a CEP from the queue
                 cep = await queue.get()
 
-                # Process the CEP using get_cep_data function
-                result = await get_cep_data(cep)
+                # Skip if already being processed by another worker
+                if cep in in_progress:
+                    queue.task_done()
+                    continue
 
-                # Store the result with the CEP as key to preserve order
-                results_dict[cep] = result
+                # Mark as in-progress
+                in_progress.add(cep)
+
+                try:
+                    # Process the CEP with timeout
+                    task = asyncio.create_task(get_cep_data(cep))
+                    try:
+                        result = await asyncio.wait_for(task, timeout=worker_timeout)
+                        # Store the result with the CEP as key to preserve order
+                        results_dict[cep] = result[0] if result else {'error': 'Empty result', 'cep': cep}
+                    except TimeoutError:
+                        # If timeout occurs, cancel the task and put CEP back in queue
+                        task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await task
+                        # Put back in queue only if not yet processed successfully
+                        if cep not in results_dict:
+                            await queue.put(cep)
+                            print(f'Worker timeout for CEP {cep}, retrying...')
+                finally:
+                    # Remove from in-progress set
+                    in_progress.discard(cep)
 
                 # Mark task as done
                 queue.task_done()
             except Exception as e:
                 # Handle any exceptions in the worker
-                results_dict[cep] = {'error': f'Worker error processing CEP: {e!s}', 'cep': cep}
+                if 'cep' in locals():
+                    results_dict[cep] = {'error': f'Worker error processing CEP: {e!s}', 'cep': cep}
+                    in_progress.discard(cep)
                 queue.task_done()
 
     # Create worker tasks
@@ -132,28 +160,21 @@ async def workers_for_multiple_cep(ceps: list[str], max_workers: int = 10) -> li
 
 async def display_cep_info(data):
     """Display CEP information in a formatted way."""
-    if isinstance(data, list):
-        for cep_info in data:
-            if 'error' in cep_info:
-                print(f'Error: {cep_info["error"]}')
-            else:
-                print(f'CEP: {cep_info.get("cep", "N/A")}')
-                print(f'State: {cep_info.get("state", "N/A")}')
-                print(f'City: {cep_info.get("city", "N/A")}')
-                print(f'Neighborhood: {cep_info.get("neighborhood", "N/A")}')
-                print(f'Street: {cep_info.get("street", "N/A")}')
-                print(f'Service: {cep_info.get("service", "N/A")}')
-                print()
-    else:
-        if 'error' in data:
-            print(f'Error: {data["error"]}')
+    # Ensure data is a list
+    if not isinstance(data, list):
+        data = [data]
+
+    for cep_info in data:
+        if 'error' in cep_info:
+            print(f'Error: {cep_info["error"]}')
         else:
-            print(f'CEP: {data.get("cep", "N/A")}')
-            print(f'State: {data.get("state", "N/A")}')
-            print(f'City: {data.get("city", "N/A")}')
-            print(f'Neighborhood: {data.get("neighborhood", "N/A")}')
-            print(f'Street: {data.get("street", "N/A")}')
-            print(f'Service: {data.get("service", "N/A")}')
+            print(f'CEP: {cep_info.get("cep", "N/A")}')
+            print(f'State: {cep_info.get("state", "N/A")}')
+            print(f'City: {cep_info.get("city", "N/A")}')
+            print(f'Neighborhood: {cep_info.get("neighborhood", "N/A")}')
+            print(f'Street: {cep_info.get("street", "N/A")}')
+            print(f'Service: {cep_info.get("service", "N/A")}')
+            print()
 
 
 if __name__ == '__main__':

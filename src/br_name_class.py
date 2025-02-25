@@ -224,7 +224,7 @@ class BrazilianNameSampler:
         # Get first surname
         surname1 = random.choices(surnames, weights=weights, k=1)[0]
         surname1 = surname1.upper() if raw else surname1
-        surname1 = self._apply_prefix(surname1)
+        surname1 = self._apply_prefix(surname1, allow_prefix=True)
 
         if with_only_one_surname:
             return surname1
@@ -232,7 +232,13 @@ class BrazilianNameSampler:
         # Get second surname
         surname2 = random.choices(surnames, weights=weights, k=1)[0]
         surname2 = surname2.upper() if raw else surname2
-        surname2 = self._apply_prefix(surname2)
+
+        # Don't apply prefix to the last surname to avoid ending with a prefix
+        # Exception: "Jr." is allowed at the end
+        if surname2.upper() == 'JUNIOR' or surname2.upper() == 'JR':
+            surname2 = 'Jr.' if not raw else 'JR'
+        else:
+            surname2 = self._apply_prefix(surname2, allow_prefix=False)
 
         return f'{surname1} {surname2}'
 
@@ -274,13 +280,14 @@ class BrazilianNameSampler:
                 if not required_keys.issubset(data.keys()):
                     raise ValueError(f'Invalid middle name entry structure for {name}. Missing required keys.')
 
-    def _apply_prefix(self, surname: str) -> str:
+    def _apply_prefix(self, surname: str, allow_prefix: bool = True) -> str:
         """
         Apply prefix to surname based on complex rules and probabilities.
         Supports multiple prefix options, compound surnames, and special cases.
 
         Args:
             surname: The surname to potentially prefix
+            allow_prefix: Whether to allow adding a prefix (default: True)
 
         Returns:
             The surname with or without prefix based on probability rules
@@ -291,6 +298,9 @@ class BrazilianNameSampler:
             - Supports special cases for vowel-initial surnames
             - Maintains proper capitalization throughout the transformation
         """
+        # If prefixes are not allowed, return the surname as is
+        if not allow_prefix:
+            return surname
         is_raw = surname.isupper()
         surname_upper = surname.upper()
 
@@ -324,6 +334,8 @@ class BrazilianNameSampler:
                         final_prefix = ('DOS' if final_prefix == 'do' else 'DAS') if is_raw else ('dos' if final_prefix == 'do' else 'das')
                     elif final_prefix == 'de' and surname[0].lower() in 'aeiou' and random.random() < 0.7:
                         final_prefix = "D'" if is_raw else "d'"
+                        # No space for D' prefix
+                        return f'{final_prefix}{surname}'
                     else:
                         final_prefix = final_prefix.upper() if is_raw else final_prefix
 

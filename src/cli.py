@@ -26,6 +26,13 @@ STATE_ABBR_ONLY = typer.Option(
 STATE_FULL_ONLY = typer.Option(False, '--state-full-only', '-sf', help='Return only full state names', rich_help_panel='Location Options')
 ONLY_CEP = typer.Option(False, '--only-cep', '-oc', help='Return only CEP', rich_help_panel='Location Options')
 CEP_WITHOUT_DASH = typer.Option(False, '--cep-without-dash', '-nd', help='Return CEP without dash', rich_help_panel='Location Options')
+MAKE_API_CALL = typer.Option(
+    False,
+    '--make-api-call',
+    '-mac',
+    help='Make API calls to retrieve real CEP data instead of generating synthetic address data',
+    rich_help_panel='Location Options',
+)
 
 # Name options
 TIME_PERIOD = typer.Option(
@@ -125,7 +132,7 @@ def _format_document_lines(doc: dict[str, str]) -> list[str]:
 
 
 def create_results_table(
-    results: list[tuple[str, NameComponents, dict[str, str]] | str],
+    results: list[tuple[str, NameComponents, dict[str, str], dict[str, str]] | str],
     title: str,
     return_only_name: bool = False,
     only_location: bool = False,
@@ -142,6 +149,7 @@ def create_results_table(
                 - location string
                 - NameComponents object (first_name, middle_name, surname)
                 - Dictionary of documents
+                - Dictionary of address data (street, neighborhood, building_number)
                 OR a plain string for simple results
         title: The title to display at the top of the table
         return_only_name: If True, displays only name information
@@ -185,12 +193,17 @@ def create_results_table(
         if not return_only_name:
             # Location and documents columns
             table.add_column('Local' if not sanitize else 'Place', style='yellow', width=30)
+            table.add_column('Logradouro' if not sanitize else 'Address', style='yellow', width=50)
             table.add_column('Documentos' if not sanitize else 'Documents', style='yellow', overflow='fold', width=28)
 
     # Process and add rows
     for idx, result in enumerate(results, 1):
         if isinstance(result, tuple):
-            location, name_components, documents = result
+            if len(result) == 4:  # New format with address data
+                location, name_components, documents, address_data = result
+            else:  # Old format without address data
+                location, name_components, documents = result
+                address_data = {}
 
             # Format documents string
             doc_lines = _format_document_lines(documents)
@@ -207,7 +220,25 @@ def create_results_table(
 
                 # Add location and documents if not name-only
                 if not return_only_name:
-                    row.extend([location or '', doc_str])
+                    # Combine address data into a single logradouro field
+                    street = address_data.get('street', '')
+                    neighborhood = address_data.get('neighborhood', '')
+                    building_number = address_data.get('building_number', '')
+
+                    # Format the logradouro: street, building_number - neighborhood
+                    logradouro = ''
+                    if street:
+                        logradouro = street
+                        if building_number:
+                            logradouro += f', {building_number}'
+                        if neighborhood:
+                            logradouro += f' - {neighborhood}'
+                    elif neighborhood:
+                        logradouro = neighborhood
+                        if building_number:
+                            logradouro += f', {building_number}'
+
+                    row.extend([location or '', logradouro, doc_str])
 
                 table.add_row(*row)
         else:
@@ -225,6 +256,7 @@ def sample(
     state_full_only: bool = STATE_FULL_ONLY,
     only_cep: bool = ONLY_CEP,
     cep_without_dash: bool = CEP_WITHOUT_DASH,
+    make_api_call: bool = MAKE_API_CALL,
     time_period: TimePeriod = TIME_PERIOD,
     return_only_name: bool = RETURN_ONLY_NAME,
     name_raw: bool = NAME_RAW,
@@ -308,6 +340,7 @@ def sample(
             state_full_only=state_full_only,
             only_cep=only_cep,
             cep_without_dash=cep_without_dash,
+            make_api_call=make_api_call,
             time_period=time_period,
             return_only_name=return_only_name,
             name_raw=name_raw,
@@ -388,7 +421,16 @@ def sample(
                         elif state_part:
                             location = state_part
 
-                results.append((location, name_components, documents))
+                # Create address data dictionary
+                address_data = {}
+                if result.get('street'):
+                    address_data['street'] = result['street']
+                if result.get('neighborhood'):
+                    address_data['neighborhood'] = result['neighborhood']
+                if result.get('building_number'):
+                    address_data['building_number'] = result['building_number']
+
+                results.append((location, name_components, documents, address_data))
         else:
             # Single result
             name_components = NameComponents(
@@ -440,7 +482,16 @@ def sample(
                     elif state_part:
                         location = state_part
 
-            results.append((location, name_components, documents))
+            # Create address data dictionary
+            address_data = {}
+            if parsed_results.get('street'):
+                address_data['street'] = parsed_results['street']
+            if parsed_results.get('neighborhood'):
+                address_data['neighborhood'] = parsed_results['neighborhood']
+            if parsed_results.get('building_number'):
+                address_data['building_number'] = parsed_results['building_number']
+
+            results.append((location, name_components, documents, address_data))
 
         # Determine appropriate title based on generation mode
         if only_document:
