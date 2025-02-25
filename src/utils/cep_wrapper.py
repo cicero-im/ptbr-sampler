@@ -70,7 +70,7 @@ async def get_cep_data(cep: str) -> list[dict[str, Any]]:
             await asyncio.sleep(0.01)  # Small delay between retries
 
 
-async def workers_for_multiple_cep(ceps: list[str], max_workers: int = 10) -> list[dict[str, Any]]:
+async def workers_for_multiple_cep(ceps: list[str], max_workers: int = 50) -> list[dict[str, Any]]:
     """
     Process multiple CEPs concurrently using a worker pool.
 
