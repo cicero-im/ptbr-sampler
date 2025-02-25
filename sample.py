@@ -9,7 +9,7 @@ from src.br_name_class import TimePeriod
 from src.sampler import sample as sampler_function
 
 
-def sample(q: int = 1, save_to_jsonl: str = None, all_data: bool = False, **kwargs) -> dict | list[dict]:
+def sample(q: int = 1, save_to_jsonl: str = None | None, all_data: bool = False, **kwargs) -> dict | list[dict]:
     """
     Generate random Brazilian name, location, and document samples.
 

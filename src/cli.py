@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import typer
@@ -7,62 +6,87 @@ from rich.table import Table
 
 from src.br_name_class import NameComponents, TimePeriod
 
-# Import the sample function from the new sampler module
+# Import the sample function from the sampler module
 from src.sampler import sample as sampler_sample
 
 app = typer.Typer(help='Brazilian Location, Name and Document Sampler CLI')
 console = Console()
 
-# Define options at module level
-DEFAULT_QTY = typer.Option(1, '--qty', '-q', help='Number of samples to generate')
-CITY_ONLY = typer.Option(False, '--city-only', '-c', help='Return only city names')
-STATE_ABBR_ONLY = typer.Option(False, '--state-abbr-only', '-sa', help='Return only state abbreviations')
-STATE_FULL_ONLY = typer.Option(False, '--state-full-only', '-sf', help='Return only full state names')
+# Define options at module level organized by panels
+# Basic options
+DEFAULT_QTY = typer.Option(1, '--qty', '-q', help='Number of samples to generate', rich_help_panel='Basic Options')
+ALL_DATA = typer.Option(False, '--all', '-a', help='Include all possible data in the generated samples', rich_help_panel='Basic Options')
+SAVE_TO_JSONL = typer.Option(None, '--save-to-jsonl', '-sj', help='Save generated samples to a JSONL file', rich_help_panel='Basic Options')
+
+# Location options
+CITY_ONLY = typer.Option(False, '--city-only', '-c', help='Return only city names', rich_help_panel='Location Options')
+STATE_ABBR_ONLY = typer.Option(
+    False, '--state-abbr-only', '-sa', help='Return only state abbreviations', rich_help_panel='Location Options'
+)
+STATE_FULL_ONLY = typer.Option(False, '--state-full-only', '-sf', help='Return only full state names', rich_help_panel='Location Options')
+ONLY_CEP = typer.Option(False, '--only-cep', '-oc', help='Return only CEP', rich_help_panel='Location Options')
+CEP_WITHOUT_DASH = typer.Option(False, '--cep-without-dash', '-nd', help='Return CEP without dash', rich_help_panel='Location Options')
+
+# Name options
+TIME_PERIOD = typer.Option(
+    TimePeriod.UNTIL_2010, '--time-period', '-t', help='Time period for name sampling', rich_help_panel='Name Options'
+)
+RETURN_ONLY_NAME = typer.Option(
+    False, '--return-only-name', '-rn', help='Return only the name without location', rich_help_panel='Name Options'
+)
+NAME_RAW = typer.Option(False, '--name-raw', '-r', help='Return names in raw format (all caps)', rich_help_panel='Name Options')
+ONLY_SURNAME = typer.Option(False, '--only-surname', '-s', help='Return only surname', rich_help_panel='Name Options')
+TOP_40 = typer.Option(False, '--top-40', '-t40', help='Use only top 40 surnames', rich_help_panel='Name Options')
+WITH_ONLY_ONE_SURNAME = typer.Option(
+    False, '--one-surname', '-os', help='Return only one surname instead of two', rich_help_panel='Name Options'
+)
+ALWAYS_MIDDLE = typer.Option(False, '--always-middle', '-am', help='Always include a middle name', rich_help_panel='Name Options')
+ONLY_MIDDLE = typer.Option(False, '--only-middle', '-om', help='Return only middle name', rich_help_panel='Name Options')
+
+# Document options
+ONLY_DOCUMENT = typer.Option(False, '--only-document', '-od', help='Return only documents', rich_help_panel='Document Options')
+ALWAYS_CPF = typer.Option(True, '--always-cpf', '-ac', help='Always include CPF', rich_help_panel='Document Options')
+ALWAYS_PIS = typer.Option(False, '--always-pis', '-ap', help='Always include PIS', rich_help_panel='Document Options')
+ALWAYS_CNPJ = typer.Option(False, '--always-cnpj', '-acn', help='Always include CNPJ', rich_help_panel='Document Options')
+ALWAYS_CEI = typer.Option(False, '--always-cei', '-ace', help='Always include CEI', rich_help_panel='Document Options')
+ALWAYS_RG = typer.Option(True, '--always-rg', '-ar', help='Always include RG', rich_help_panel='Document Options')
+ONLY_CPF = typer.Option(False, '--only-cpf', '-ocpf', help='Return only CPF', rich_help_panel='Document Options')
+ONLY_PIS = typer.Option(False, '--only-pis', '-op', help='Return only PIS', rich_help_panel='Document Options')
+ONLY_CNPJ = typer.Option(False, '--only-cnpj', '-ocn', help='Return only CNPJ', rich_help_panel='Document Options')
+ONLY_CEI = typer.Option(False, '--only-cei', '-oce', help='Return only CEI', rich_help_panel='Document Options')
+ONLY_RG = typer.Option(False, '--only-rg', '-or', help='Return only RG', rich_help_panel='Document Options')
+INCLUDE_ISSUER = typer.Option(
+    True, '--include-issuer', '-ii', help='Include issuer in RG (default: True)', rich_help_panel='Document Options'
+)
+
+# Data source options
 JSON_PATH = typer.Option(
     'src/data/cities_with_ceps.json',
     '--json-path',
     '-j',
     help='Path to the cities and CEPs data JSON file',
+    rich_help_panel='Data Source Options',
 )
 NAMES_PATH = typer.Option(
-    'src/data/names_data.json',
-    '--names-path',
-    '-n',
-    help='Path to the first names data JSON file',
+    'src/data/names_data.json', '--names-path', '-np', help='Path to the first names data JSON file', rich_help_panel='Data Source Options'
 )
 MIDDLE_NAMES_PATH = typer.Option(
     'src/data/middle_names.json',
     '--middle-names-path',
-    '-m',
+    '-mnp',
     help='Path to the middle names JSON file',
+    rich_help_panel='Data Source Options',
 )
-SURNAMES_PATH = typer.Option('src/data/surnames_data.json', '--surnames-path', '-sp', help='Path to the surnames JSON file')
-LOCATIONS_PATH = typer.Option('src/data/locations_data.json', '--locations-path', '-lp', help='Path to the locations data JSON file')
-CEP_WITHOUT_DASH = typer.Option(False, '--cep-without-dash', '-nd', help='Return CEP without dash')
-ONLY_CEP = typer.Option(False, '--only-cep', '-oc', help='Return only CEP')
-TIME_PERIOD = typer.Option(TimePeriod.UNTIL_2010, '--time-period', '-t', help='Time period for name sampling')
-RETURN_ONLY_NAME = typer.Option(False, '--return-only-name', '-n', help='Return only the name without location')
-NAME_RAW = typer.Option(False, '--name-raw', '-r', help='Return names in raw format (all caps)')
-ONLY_SURNAME = typer.Option(False, '--only-surname', '-s', help='Return only surname')
-TOP_40 = typer.Option(False, '--top-40', '-t40', help='Use only top 40 surnames')
-WITH_ONLY_ONE_SURNAME = typer.Option(False, '--one-surname', '-os', help='Return only one surname instead of two')
-ALWAYS_MIDDLE = typer.Option(False, '--always-middle', '-am', help='Always include a middle name')
-ONLY_MIDDLE = typer.Option(False, '--only-middle', '-om', help='Return only middle name')
-ALWAYS_CPF = typer.Option(True, '--always-cpf', '-ac', help='Always include CPF')
-ALWAYS_PIS = typer.Option(False, '--always-pis', '-ap', help='Always include PIS')
-ALWAYS_CNPJ = typer.Option(False, '--always-cnpj', '-acn', help='Always include CNPJ')
-ALWAYS_CEI = typer.Option(False, '--always-cei', '-ace', help='Always include CEI')
-ALWAYS_RG = typer.Option(True, '--always-rg', '-ar', help='Always include RG')
-ONLY_CPF = typer.Option(False, '--only-cpf', '-oc', help='Return only CPF')
-ONLY_PIS = typer.Option(False, '--only-pis', '-op', help='Return only PIS')
-ONLY_CNPJ = typer.Option(False, '--only-cnpj', '-ocn', help='Return only CNPJ')
-ONLY_CEI = typer.Option(False, '--only-cei', '-oce', help='Return only CEI')
-ONLY_RG = typer.Option(False, '--only-rg', '-or', help='Return only RG')
-INCLUDE_ISSUER = typer.Option(True, '--include-issuer', '-ii', help='Include issuer in RG (default: True)')
-ONLY_DOCUMENT = typer.Option(False, '--only-document', '-od', help='Return only documents')
-# New options
-SAVE_TO_JSONL = typer.Option(None, '--save-to-jsonl', '-sj', help='Save generated samples to a JSONL file')
-ALL_DATA = typer.Option(False, '--all', '-a', help='Include all possible data in the generated samples')
+SURNAMES_PATH = typer.Option(
+    'src/data/surnames_data.json', '--surnames-path', '-sp', help='Path to the surnames JSON file', rich_help_panel='Data Source Options'
+)
+LOCATIONS_PATH = typer.Option(
+    'src/data/locations_data.json',
+    '--locations-path',
+    '-lp',
+    help='Path to the locations data JSON file',
+    rich_help_panel='Data Source Options',
+)
 
 
 def _format_document_lines(doc: dict[str, str]) -> list[str]:
@@ -141,24 +165,27 @@ def create_results_table(
         padding=(0, 1),  # Add minimal padding for readability
         title_style='bold yellow',
         border_style='blue',
+        header_style='bold blue',
+        expand=True,
+        collapse_padding=True,
     )
 
     # Add columns based on display mode
-    table.add_column('Id', justify='right', style='blue', no_wrap=True)
+    table.add_column('Id', justify='right', style='yellow', no_wrap=True, width=5)
 
     if only_document:
-        table.add_column('Documentos' if not sanitize else 'Documents', style='yellow', overflow='fold', width=50)
+        table.add_column('Documentos' if not sanitize else 'Documents', style='yellow', overflow='fold', max_width=50)
     else:
         if not only_location:
             # Name columns
-            table.add_column('Nome' if not sanitize else 'Name', style='yellow', width=20)
-            table.add_column('Nome do Meio' if not sanitize else 'Middle', style='yellow', width=20)
-            table.add_column('Sobrenome' if not sanitize else 'Surname', style='yellow', width=30)
+            table.add_column('Nome' if not sanitize else 'Name', style='yellow', width=21)
+            table.add_column('Nome do Meio' if not sanitize else 'Middle', style='yellow', width=22)
+            table.add_column('Sobrenome' if not sanitize else 'Surname', style='yellow', width=23)
 
         if not return_only_name:
             # Location and documents columns
-            table.add_column('Local' if not sanitize else 'Place', style='yellow', width=40)
-            table.add_column('Documentos' if not sanitize else 'Documents', style='yellow', overflow='fold', width=50)
+            table.add_column('Local' if not sanitize else 'Place', style='yellow', width=30)
+            table.add_column('Documentos' if not sanitize else 'Documents', style='yellow', overflow='fold', width=28)
 
     # Process and add rows
     for idx, result in enumerate(results, 1):
@@ -188,20 +215,6 @@ def create_results_table(
             table.add_row(str(idx), result)
 
     return table
-
-
-def save_to_jsonl_file(data: list[dict], filename: str) -> None:
-    """Save generated samples to a JSONL file.
-
-    Args:
-        data: List of dictionaries containing sample data
-        filename: Path to the output JSONL file
-    """
-    with open(filename, 'w', encoding='utf-8') as f:
-        for item in data:
-            f.write(json.dumps(item, ensure_ascii=False) + '\n')
-
-    console.print(f'[green]Saved {len(data)} samples to {filename}[/green]')
 
 
 @app.command()
@@ -239,7 +252,7 @@ def sample(
     locations_path: Path = LOCATIONS_PATH,
     save_to_jsonl: str = SAVE_TO_JSONL,
     all_data: bool = ALL_DATA,
-) -> list[tuple[str, NameComponents, dict[str, str]]]:
+) -> None:
     """Generate random Brazilian samples with comprehensive information.
 
     This function generates random Brazilian location, name, and document samples
@@ -280,39 +293,16 @@ def sample(
         locations_path: Path to locations data JSON file
         save_to_jsonl: Path to save generated samples as JSONL
         all_data: Include all possible data in the generated samples
-    Returns:
-        List of tuples containing (location, name_components, documents)
 
     Raises:
         typer.Exit: If an error occurs during execution
     """
 
     try:
-        # If all_data is True, override other flags to include everything
-        if all_data:
-            always_cpf = True
-            always_pis = True
-            always_cnpj = True
-            always_cei = True
-            always_rg = True
-            always_middle = True
-            only_cpf = False
-            only_pis = False
-            only_cnpj = False
-            only_cei = False
-            only_rg = False
-            only_surname = False
-            only_middle = False
-            only_cep = False
-            city_only = False
-            state_abbr_only = False
-            state_full_only = False
-            return_only_name = False
-            only_document = False
-
-        # Call the sample function from the sampler module
+        # Call the sample function from the sampler module with all parameters
         parsed_results = sampler_sample(
             qty=qty,
+            q=None,  # We don't use this alias in the CLI
             city_only=city_only,
             state_abbr_only=state_abbr_only,
             state_full_only=state_full_only,
@@ -343,15 +333,9 @@ def sample(
             only_document=only_document,
             surnames_path=surnames_path,
             locations_path=locations_path,
+            save_to_jsonl=save_to_jsonl,
             all_data=all_data,
         )
-
-        # Save to JSONL if requested
-        if save_to_jsonl:
-            if isinstance(parsed_results, list):
-                save_to_jsonl_file(parsed_results, save_to_jsonl)
-            else:
-                save_to_jsonl_file([parsed_results], save_to_jsonl)
 
         # Convert parsed results back to the format expected by create_results_table
         results = []
@@ -437,15 +421,20 @@ def sample(
                 else:
                     # Try to reconstruct full location
                     city_part = parsed_results['city']
-                    if parsed_results['cep']:
-                        city_part += f' - {parsed_results["cep"]}'
-
                     state_part = parsed_results['state']
+                    if parsed_results['cep']:
+                        cep_part = parsed_results['cep']
+                        if parsed_results['state_abbr'] and state_part:
+                            state_abbr_part = f' ({parsed_results["state_abbr"]})'
+                            full_location = f'{city_part}, {state_part}{state_abbr_part} - {cep_part}'
+                        else:
+                            full_location = f'{city_part} - {cep_part}'
+
                     if parsed_results['state_abbr']:
-                        state_part += f' ({parsed_results["state_abbr"]})'
+                        state_part += f' ({state_abbr_part})'
 
                     if city_part and state_part:
-                        location = f'{city_part}, {state_part}'
+                        location = full_location
                     elif city_part:
                         location = city_part
                     elif state_part:
@@ -499,8 +488,6 @@ def sample(
             only_document=only_document,
         )
         console.print(table)
-
-        return parsed_results
 
     except Exception as e:
         console.print(f'[red]Error: {e!s}[/red]')

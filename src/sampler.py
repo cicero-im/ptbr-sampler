@@ -64,40 +64,53 @@ def parse_result(
     return result
 
 
+def save_to_jsonl_file(data: list[dict], filename: str) -> None:
+    """Save generated samples to a JSONL file.
+
+    Args:
+        data: List of dictionaries containing sample data
+        filename: Path to the output JSONL file
+    """
+    with Path(filename).open('w', encoding='utf-8') as f:
+        for item in data:
+            f.write(json.dumps(item, ensure_ascii=False) + '\n')
+
+
 def sample(
-    qty: int = 1,
-    q: int | None = None,
-    city_only: bool = False,
-    state_abbr_only: bool = False,
-    state_full_only: bool = False,
-    only_cep: bool = False,
-    cep_without_dash: bool = False,
-    time_period: TimePeriod = TimePeriod.UNTIL_2010,
-    return_only_name: bool = False,
-    name_raw: bool = False,
-    json_path: str | Path = 'src/data/cities_with_ceps.json',
-    names_path: str | Path = 'src/data/names_data.json',
-    middle_names_path: str | Path = 'src/data/middle_names.json',
-    only_surname: bool = False,
-    top_40: bool = False,
-    with_only_one_surname: bool = False,
-    always_middle: bool = False,
-    only_middle: bool = False,
-    always_cpf: bool = True,
-    always_pis: bool = False,
-    always_cnpj: bool = False,
-    always_cei: bool = False,
-    always_rg: bool = True,
-    only_cpf: bool = False,
-    only_pis: bool = False,
-    only_cnpj: bool = False,
-    only_cei: bool = False,
-    only_rg: bool = False,
-    include_issuer: bool = True,
-    only_document: bool = False,
-    surnames_path: str | Path = 'src/data/surnames_data.json',
-    locations_path: str | Path = 'src/data/locations_data.json',
-    all_data: bool = False,
+    qty: int,
+    q: int | None,
+    city_only: bool,
+    state_abbr_only: bool,
+    state_full_only: bool,
+    only_cep: bool,
+    cep_without_dash: bool,
+    time_period: TimePeriod,
+    return_only_name: bool,
+    name_raw: bool,
+    json_path: str | Path,
+    names_path: str | Path,
+    middle_names_path: str | Path,
+    only_surname: bool,
+    top_40: bool,
+    with_only_one_surname: bool,
+    always_middle: bool,
+    only_middle: bool,
+    always_cpf: bool,
+    always_pis: bool,
+    always_cnpj: bool,
+    always_cei: bool,
+    always_rg: bool,
+    only_cpf: bool,
+    only_pis: bool,
+    only_cnpj: bool,
+    only_cei: bool,
+    only_rg: bool,
+    include_issuer: bool,
+    only_document: bool,
+    surnames_path: str | Path,
+    locations_path: str | Path,
+    save_to_jsonl: str | None,
+    all_data: bool,
 ) -> dict | list[dict]:
     """Generate random Brazilian samples with comprehensive information.
 
@@ -138,7 +151,9 @@ def sample(
         only_document: Return only documents
         surnames_path: Path to surnames data file
         locations_path: Path to locations data JSON file
+        save_to_jsonl: Path to save generated samples as JSONL
         all_data: Include all possible data in the generated samples
+
     Returns:
         A dictionary with the generated sample if qty=1, or a list of dictionaries if qty>1.
         Each dictionary contains keys for name, location, and document information.
@@ -169,9 +184,23 @@ def sample(
         only_document = False
 
     try:
-        # Initialize samplers separately
+        # Initialize samplers only once
         location_sampler = BrazilianLocationSampler(json_path)
         doc_sampler = DocumentSampler()
+
+        # Load location data if provided - do this only once
+        if locations_path:
+            try:
+                with Path(locations_path).open(encoding='utf-8') as f:
+                    locations_data = json.load(f)
+                    # Use locations data if available
+                    if 'cities' in locations_data:
+                        location_sampler.update_cities(locations_data['cities'])
+                    if 'states' in locations_data:
+                        location_sampler.update_states(locations_data['states'])
+            except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+                # Log but continue with default data
+                print(f'Warning: Could not use locations_path data: {e}')
 
         # Load surnames data for name sampler
         with Path(surnames_path).open(encoding='utf-8') as f:
@@ -193,11 +222,58 @@ def sample(
         # Initialize results list
         results: list[tuple[str, NameComponents, dict[str, str]]] = []
 
-        if return_only_name or only_surname or only_middle:
+        if only_document:
+            # Document-only generation with proper state handling
+            for _ in range(actual_qty):
+                documents = {}
+
+                # Generate location first to get proper state for RG
+                state_name, state_abbr, city_name = location_sampler.get_state_and_city()
+
+                # Generate all requested documents
+                if always_cpf or only_cpf:
+                    documents['cpf'] = doc_sampler.generate_cpf()
+                if always_pis or only_pis:
+                    documents['pis'] = doc_sampler.generate_pis()
+                if always_cnpj or only_cnpj:
+                    documents['cnpj'] = doc_sampler.generate_cnpj()
+                if always_cei or only_cei:
+                    documents['cei'] = doc_sampler.generate_cei()
+                if always_rg or only_rg:
+                    documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
+
+                results.append((None, None, documents))
+
+        elif any([only_cpf, only_pis, only_cnpj, only_cei, only_rg]):
+            # Handle document-only generation with proper state handling
+            for _ in range(actual_qty):
+                documents = {}
+
+                # No need to reload location data - already loaded once at the beginning
+
+                # Generate location first to get proper state for RG
+                state_name, state_abbr, city_name = location_sampler.get_state_and_city()
+
+                if only_cpf:
+                    documents['cpf'] = doc_sampler.generate_cpf()
+                if only_pis:
+                    documents['pis'] = doc_sampler.generate_pis()
+                if only_cnpj:
+                    documents['cnpj'] = doc_sampler.generate_cnpj()
+                if only_cei:
+                    documents['cei'] = doc_sampler.generate_cei()
+                if only_rg:
+                    documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
+
+                results.append((None, None, documents))
+
+        elif return_only_name or only_surname or only_middle:
             # Name-only generation
             for _ in range(actual_qty):
                 documents = {}
                 name_components = None
+
+                # No need to reload location data - already loaded once at the beginning
 
                 if only_surname:
                     name_components = NameComponents(
@@ -230,31 +306,12 @@ def sample(
                         documents['rg'] = f'{doc_sampler.generate_rg("SP", include_issuer)}'
 
                 results.append((None, name_components, documents))
-
-        elif any([only_cpf, only_pis, only_cnpj, only_cei, only_rg]):
-            # Handle document-only generation with proper state handling
-            for _ in range(actual_qty):
-                documents = {}
-                # Generate location first to get proper state for RG
-                state_name, state_abbr, city_name = location_sampler.get_state_and_city()
-
-                if only_cpf:
-                    documents['cpf'] = doc_sampler.generate_cpf()
-                if only_pis:
-                    documents['pis'] = doc_sampler.generate_pis()
-                if only_cnpj:
-                    documents['cnpj'] = doc_sampler.generate_cnpj()
-                if only_cei:
-                    documents['cei'] = doc_sampler.generate_cei()
-                if only_rg:
-                    documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
-
-                results.append((None, None, documents))
-
         else:
             # Full sample generation with location, name, and documents
             for _ in range(actual_qty):
                 documents = {}
+
+                # No need to reload location data - already loaded once at the beginning
 
                 # Generate location first to ensure proper state handling
                 state_name, state_abbr, city_name = location_sampler.get_state_and_city()
@@ -302,13 +359,41 @@ def sample(
 
                 results.append((location, name_components, documents))
 
+        # Modify the results to include state_info for each sample
+        results_with_state_info = []
+
+        # For all types of generation
+        for i in range(actual_qty):
+            # Generate a new state and city for each sample
+            state_name, state_abbr, city_name = location_sampler.get_state_and_city()
+
+            # Get a random CEP for the city
+            cep = location_sampler._get_random_cep_for_city(city_name)
+            formatted_cep = location_sampler._format_cep(cep, not cep_without_dash)
+
+            # Format the full location string with CEP
+            # The parse_result function expects the format: "city - cep, state (abbr)"
+            location_str = f'{city_name} - {formatted_cep}, {state_name} ({state_abbr})'
+
+            # Get the corresponding result
+            location, name_components, documents = results[i]
+
+            # Add to the new results list with state_info
+            results_with_state_info.append((location_str, name_components, documents))
+
         # Convert results to dictionary format
-        parsed_results = [
-            parse_result(
-                location, name_components, documents, state_info=(state_name, state_abbr, city_name) if 'state_name' in locals() else None
-            )
-            for location, name_components, documents in results
-        ]
+        parsed_results = []
+        for location, name_components, documents in results_with_state_info:
+            # Parse the location string to extract city, state, and CEP
+            result_dict = parse_result(location, name_components, documents, state_info=None)
+            parsed_results.append(result_dict)
+
+        # Save to JSONL if requested
+        if save_to_jsonl:
+            if isinstance(parsed_results, list):
+                save_to_jsonl_file(parsed_results, save_to_jsonl)
+            else:
+                save_to_jsonl_file([parsed_results], save_to_jsonl)
 
         return parsed_results[0] if actual_qty == 1 else parsed_results
 

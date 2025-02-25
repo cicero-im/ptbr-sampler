@@ -1,0 +1,7 @@
+{
+  "name": "ptbr-sampler",
+  "type": "module",
+  "dependencies": {
+    "cep-promise": "^4.4.1"
+  }
+} 

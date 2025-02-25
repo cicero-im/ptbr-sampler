@@ -26,6 +26,50 @@ class BrazilianLocationSampler:
         # Pre-calculate weights for more efficient sampling
         self._calculate_weights()
 
+    def update_cities(self, cities_data: dict) -> None:
+        """Update the cities data and recalculate weights.
+
+        This method allows updating the cities data after initialization,
+        which is useful when loading custom location data.
+
+        Args:
+            cities_data: Dictionary containing city data to update or add
+
+        Raises:
+            ValueError: If cities_data is not a valid dictionary
+        """
+        if not isinstance(cities_data, dict):
+            raise ValueError('cities_data must be a dictionary')
+
+        # Update the cities data
+        if cities_data:
+            self.data['cities'].update(cities_data)
+
+        # Recalculate weights to ensure proper sampling
+        self._calculate_weights()
+
+    def update_states(self, states_data: dict) -> None:
+        """Update the states data and recalculate weights.
+
+        This method allows updating the states data after initialization,
+        which is useful when loading custom location data.
+
+        Args:
+            states_data: Dictionary containing state data to update or add
+
+        Raises:
+            ValueError: If states_data is not a valid dictionary
+        """
+        if not isinstance(states_data, dict):
+            raise ValueError('states_data must be a dictionary')
+
+        # Update the states data
+        if states_data:
+            self.data['states'].update(states_data)
+
+        # Recalculate weights to ensure proper sampling
+        self._calculate_weights()
+
     def _calculate_weights(self) -> None:
         """Pre-calculate weights for states and cities based on population percentages."""
         # Calculate state weights
