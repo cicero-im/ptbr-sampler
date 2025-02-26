@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from src.utils.address_for_offline import AddressProvider_for_offline
+from src.utils.phone import generate_phone_number
 
 from .br_location_class import BrazilianLocationSampler
 from .br_name_class import BrazilianNameSampler, NameComponents, TimePeriod
@@ -50,6 +51,7 @@ def parse_result(
         'pis': documents.get('pis', ''),
         'cnpj': documents.get('cnpj', ''),
         'cei': documents.get('cei', ''),
+        'phone': documents.get('phone', ''),
     }
 
     if state_info:
@@ -215,11 +217,13 @@ def sample(
     always_cnpj: bool,
     always_cei: bool,
     always_rg: bool,
+    always_phone: bool,
     only_cpf: bool,
     only_pis: bool,
     only_cnpj: bool,
     only_cei: bool,
     only_rg: bool,
+    only_fone: bool,
     include_issuer: bool,
     only_document: bool,
     surnames_path: str | Path,
@@ -283,12 +287,14 @@ def sample(
         always_cnpj = True
         always_cei = True
         always_rg = True
+        always_phone = True
         always_middle = True
         only_cpf = False
         only_pis = False
         only_cnpj = False
         only_cei = False
         only_rg = False
+        only_fone = False
         only_surname = False
         only_middle = False
         only_cep = False
@@ -356,10 +362,15 @@ def sample(
                     documents['cei'] = doc_sampler.generate_cei()
                 if always_rg or only_rg:
                     documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
+                if always_phone or only_fone:
+                    # Get the DDD from the city data
+                    city_data = location_sampler.city_data_by_name.get(city_name, {})
+                    ddd = city_data.get('ddd', None)
+                    documents['phone'] = generate_phone_number(ddd)
 
                 results.append((None, None, documents))
 
-        elif any([only_cpf, only_pis, only_cnpj, only_cei, only_rg]):
+        elif any([only_cpf, only_pis, only_cnpj, only_cei, only_rg, only_fone]):
             # Handle document-only generation with proper state handling
             for _ in range(actual_qty):
                 documents = {}
@@ -368,7 +379,6 @@ def sample(
 
                 # Generate location first to get proper state for RG
                 state_name, state_abbr, city_name = location_sampler.get_state_and_city()
-
                 if only_cpf:
                     documents['cpf'] = doc_sampler.generate_cpf()
                 if only_pis:
@@ -379,6 +389,11 @@ def sample(
                     documents['cei'] = doc_sampler.generate_cei()
                 if only_rg:
                     documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
+                if only_fone:
+                    # Get the DDD from the city data
+                    city_data = location_sampler.city_data_by_name.get(city_name, {})
+                    ddd = city_data.get('ddd', None)
+                    documents['phone'] = generate_phone_number(ddd)
 
                 results.append((None, None, documents))
 
@@ -389,6 +404,9 @@ def sample(
                 name_components = None
 
                 # No need to reload location data - already loaded once at the beginning
+
+                # Generate location first to get proper state and DDD
+                state_name, state_abbr, city_name = location_sampler.get_state_and_city()
 
                 if only_surname:
                     name_components = NameComponents(
@@ -417,10 +435,17 @@ def sample(
                     if always_cei:
                         documents['cei'] = doc_sampler.generate_cei()
                     if always_rg:
-                        # Use SP as default state for name-only results
-                        documents['rg'] = f'{doc_sampler.generate_rg("SP", include_issuer)}'
+                        # Use the generated state for RG
+                        documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
+                    if always_phone:
+                        # Get the DDD from the city data
+                        city_data = location_sampler.city_data_by_name.get(city_name, {})
+                        ddd = city_data.get('ddd', None)
+                        documents['phone'] = generate_phone_number(ddd)
 
-                results.append((None, name_components, documents))
+                # Add the location string for name-only results
+                location_str = f'{city_name} - , {state_name} ({state_abbr})'
+                results.append((location_str, name_components, documents))
         else:
             # Full sample generation with location, name, and documents
             for _ in range(actual_qty):
@@ -458,6 +483,11 @@ def sample(
                 if always_rg or only_rg:
                     # Always use the state from our location for RG generation
                     documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
+                if always_phone or only_fone:
+                    # Get the DDD from the city data
+                    city_data = location_sampler.city_data_by_name.get(city_name, {})
+                    ddd = city_data.get('ddd', None)
+                    documents['phone'] = generate_phone_number(ddd)
 
                 # Generate name components if needed
                 name_components = None
@@ -480,8 +510,9 @@ def sample(
 
         # For all types of generation
         for i in range(actual_qty):
-            # Generate a new state and city for each sample
+            # Generate a new state and city
             state_name, state_abbr, city_name = location_sampler.get_state_and_city()
+
             all_state_city_info.append((state_name, state_abbr, city_name))
 
             # Get a random CEP for the city
@@ -506,6 +537,13 @@ def sample(
             # Get the corresponding result
             location, name_components, documents = results[i]
 
+            # Update the phone number to use the correct DDD
+            if 'phone' in documents:
+                # Get the DDD from the city data
+                city_data = location_sampler.city_data_by_name.get(city_name, {})
+                ddd = city_data.get('ddd', None)
+                documents['phone'] = generate_phone_number(ddd)
+
             # Add to the new results list with state_info
             results_with_state_info.append((location_str, name_components, documents))
 
@@ -527,7 +565,6 @@ def sample(
                 save_to_jsonl_file([parsed_results], save_to_jsonl)
 
         return parsed_results[0] if actual_qty == 1 else parsed_results
-
     except Exception as e:
         # Re-raise the exception with more context
         raise RuntimeError(f'Error generating samples: {e}') from e

@@ -57,11 +57,13 @@ ALWAYS_PIS = typer.Option(False, '--always-pis', '-ap', help='Always include PIS
 ALWAYS_CNPJ = typer.Option(False, '--always-cnpj', '-acn', help='Always include CNPJ', rich_help_panel='Document Options')
 ALWAYS_CEI = typer.Option(False, '--always-cei', '-ace', help='Always include CEI', rich_help_panel='Document Options')
 ALWAYS_RG = typer.Option(True, '--always-rg', '-ar', help='Always include RG', rich_help_panel='Document Options')
+ALWAYS_PHONE = typer.Option(True, '--always-phone', '-aph', help='Always include phone number', rich_help_panel='Local e Fone')
 ONLY_CPF = typer.Option(False, '--only-cpf', '-ocpf', help='Return only CPF', rich_help_panel='Document Options')
 ONLY_PIS = typer.Option(False, '--only-pis', '-op', help='Return only PIS', rich_help_panel='Document Options')
 ONLY_CNPJ = typer.Option(False, '--only-cnpj', '-ocn', help='Return only CNPJ', rich_help_panel='Document Options')
 ONLY_CEI = typer.Option(False, '--only-cei', '-oce', help='Return only CEI', rich_help_panel='Document Options')
 ONLY_RG = typer.Option(False, '--only-rg', '-or', help='Return only RG', rich_help_panel='Document Options')
+ONLY_FONE = typer.Option(False, '--only-fone', '-of', help='Return only phone number', rich_help_panel='Local e Fone')
 INCLUDE_ISSUER = typer.Option(
     True, '--include-issuer', '-ii', help='Include issuer in RG (default: True)', rich_help_panel='Document Options'
 )
@@ -105,7 +107,7 @@ def _format_document_lines(doc: dict[str, str]) -> list[str]:
 
     Args:
         doc: Dictionary containing document information
-             Keys can be: 'cpf', 'pis', 'cnpj', 'cei', 'rg'
+             Keys can be: 'cpf', 'pis', 'cnpj', 'cei', 'rg', 'phone'
 
     Returns:
         List of formatted document strings
@@ -127,6 +129,8 @@ def _format_document_lines(doc: dict[str, str]) -> list[str]:
         doc_lines.append(f'CNPJ: {doc["cnpj"]}')
     if 'cei' in doc:
         doc_lines.append(f'CEI: {doc["cei"]}')
+    if 'phone' in doc:
+        doc_lines.append(f'Telefone: {doc["phone"]}')
 
     return doc_lines
 
@@ -238,6 +242,14 @@ def create_results_table(
                         if building_number:
                             logradouro += f', {building_number}'
 
+                    # Add phone number to logradouro if available
+                    phone = address_data.get('phone', '')
+                    if phone:
+                        if logradouro:
+                            logradouro += f'\nTelefone: {phone}'
+                        else:
+                            logradouro = f'Telefone: {phone}'
+
                     row.extend([location or '', logradouro, doc_str])
 
                 table.add_row(*row)
@@ -273,11 +285,13 @@ def sample(
     always_cnpj: bool = ALWAYS_CNPJ,
     always_cei: bool = ALWAYS_CEI,
     always_rg: bool = ALWAYS_RG,
+    always_phone: bool = ALWAYS_PHONE,
     only_cpf: bool = ONLY_CPF,
     only_pis: bool = ONLY_PIS,
     only_cnpj: bool = ONLY_CNPJ,
     only_cei: bool = ONLY_CEI,
     only_rg: bool = ONLY_RG,
+    only_fone: bool = ONLY_FONE,
     include_issuer: bool = INCLUDE_ISSUER,
     only_document: bool = ONLY_DOCUMENT,
     surnames_path: Path = SURNAMES_PATH,
@@ -357,11 +371,13 @@ def sample(
             always_cnpj=always_cnpj,
             always_cei=always_cei,
             always_rg=always_rg,
+            always_phone=always_phone,
             only_cpf=only_cpf,
             only_pis=only_pis,
             only_cnpj=only_cnpj,
             only_cei=only_cei,
             only_rg=only_rg,
+            only_fone=only_fone,
             include_issuer=include_issuer,
             only_document=only_document,
             surnames_path=surnames_path,
@@ -429,6 +445,8 @@ def sample(
                     address_data['neighborhood'] = result['neighborhood']
                 if result.get('building_number'):
                     address_data['building_number'] = result['building_number']
+                if result.get('phone'):
+                    address_data['phone'] = result['phone']
 
                 results.append((location, name_components, documents, address_data))
         else:
@@ -490,6 +508,8 @@ def sample(
                 address_data['neighborhood'] = parsed_results['neighborhood']
             if parsed_results.get('building_number'):
                 address_data['building_number'] = parsed_results['building_number']
+            if parsed_results.get('phone'):
+                address_data['phone'] = parsed_results['phone']
 
             results.append((location, name_components, documents, address_data))
 
