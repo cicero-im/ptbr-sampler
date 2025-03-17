@@ -304,6 +304,110 @@ async def get_address_data(cep: str, make_api_call: bool = False) -> dict:
     return result[0] if result else {}
 
 
+async def process_and_save_in_batches(
+    all_ceps: list[str],
+    all_state_city_info: list[tuple[str, str, str]],
+    results_with_state_info: list[tuple[str, NameComponents, dict[str, str]]],
+    make_api_call: bool,
+    save_to_jsonl: str | None,
+    append_to_jsonl: bool,
+    progress_callback: callable | None = None,
+    batch_size: int = 100
+) -> list[dict]:
+    """Process CEPs in batches, make API calls for each batch, and save results incrementally.
+    
+    Args:
+        all_ceps: List of CEPs to process
+        all_state_city_info: List of (state_name, state_abbr, city_name) tuples
+        results_with_state_info: List of (location, name_components, documents) tuples
+        make_api_call: Whether to make API calls or generate data
+        save_to_jsonl: Path to save results as JSONL (if None, no saving is done)
+        append_to_jsonl: Whether to append to existing JSONL file
+        progress_callback: Optional callback function for progress updates
+        batch_size: Number of CEPs to process in each batch
+        
+    Returns:
+        List of dictionaries with all parsed results
+    """
+    total_items = len(all_ceps)
+    all_parsed_results = []
+    
+    # Calculate number of batches
+    num_batches = (total_items + batch_size - 1) // batch_size  # ceiling division
+    
+    logger.info(f"Processing {total_items} items in {num_batches} batches of {batch_size}")
+    
+    for batch_idx in range(num_batches):
+        start_idx = batch_idx * batch_size
+        end_idx = min(start_idx + batch_size, total_items)
+        current_batch_size = end_idx - start_idx
+        
+        logger.info(f"Processing batch {batch_idx + 1}/{num_batches} with {current_batch_size} items")
+        
+        if progress_callback:
+            progress_callback(start_idx, f"Processing batch {batch_idx + 1}/{num_batches}")
+        
+        # Get the batch of CEPs and state-city info
+        batch_ceps = all_ceps[start_idx:end_idx]
+        batch_state_city_info = all_state_city_info[start_idx:end_idx]
+        batch_results_info = results_with_state_info[start_idx:end_idx]
+        
+        # Process address data for the batch
+        if make_api_call:
+            if progress_callback:
+                progress_callback(start_idx, f"API calls for batch {batch_idx + 1}")
+                
+            logger.info(f"Making API calls for batch {batch_idx + 1} with {len(batch_ceps)} CEPs")
+            batch_address_data = await get_address_data_batch(batch_ceps, make_api_call, progress_callback)
+        else:
+            logger.info(f"Generating synthetic address data for batch {batch_idx + 1}")
+            batch_address_data = await get_address_data_batch(batch_ceps, False, progress_callback)
+        
+        # Process results for this batch
+        batch_parsed_results = []
+        for i, (location, name_components, documents) in enumerate(batch_results_info):
+            # Get the corresponding address data
+            address_data = batch_address_data[i] if i < len(batch_address_data) else {}
+            
+            # Get the state info for this item
+            state_info = batch_state_city_info[i] if i < len(batch_state_city_info) else None
+            
+            # Parse the result
+            result_dict = parse_result(
+                location,
+                name_components,
+                documents,
+                state_info=state_info,
+                address_data=address_data,
+            )
+            batch_parsed_results.append(result_dict)
+            all_parsed_results.append(result_dict)
+        
+        # Save this batch if requested
+        if save_to_jsonl:
+            try:
+                # For the first batch, we may need to overwrite the file
+                current_append = append_to_jsonl if batch_idx > 0 else False
+                if batch_idx == 0 and append_to_jsonl:
+                    # For the first batch when appending, check if file exists
+                    # If not, we'll create it (so use append=False)
+                    file_path = Path(save_to_jsonl)
+                    current_append = file_path.exists()
+                
+                logger.info(f"Saving batch {batch_idx + 1} with {len(batch_parsed_results)} results to {save_to_jsonl} (append={current_append})")
+                
+                # Save just this batch
+                await save_to_jsonl_file(batch_parsed_results, save_to_jsonl, append=current_append)
+                
+                if progress_callback:
+                    progress_callback(end_idx, f"Saved batch {batch_idx + 1}/{num_batches}")
+            except Exception as e:
+                logger.error(f"Error saving batch {batch_idx + 1} to JSONL: {e}")
+                print(f"Error saving batch {batch_idx + 1} to JSONL: {e}")
+    
+    return all_parsed_results
+
+
 def sample(
     qty: int,
     q: int | None,
@@ -711,20 +815,8 @@ def sample(
                 if progress_callback and make_api_call:
                     progress_callback(actual_qty * 3 // 4, 'API calls starting')  # Show approximately 75% progress
 
-                # Get address data for all CEPs at once
-                all_address_data = asyncio.run(get_address_data_batch(all_ceps, make_api_call, progress_callback))
-
-                # Update progress to indicate API calls are complete
-                if progress_callback and make_api_call:
-                    progress_callback(actual_qty * 4 // 5, 'API calls completed')
-
-                # Update progress to indicate we're finalizing results
-                if progress_callback:
-                    progress_callback(actual_qty * 9 // 10, 'Finalizing results')  # Show approximately 90% progress
-
-                # Modify the results to include state_info and address data
+                # Create the results_with_state_info list with the location, name_components, and documents
                 results_with_state_info = []
-
                 for i in range(actual_qty):
                     state_name, state_abbr, city_name = all_state_city_info[i]
                     formatted_cep = all_ceps[i]
@@ -736,26 +828,20 @@ def sample(
                     # Get the corresponding result
                     location, name_components, documents = results[i]
 
-                    # No need to regenerate phone - we already have the correct one
-
                     # Add to the new results list with state_info
                     results_with_state_info.append((location_str, name_components, documents))
 
-                # Convert results to proper dictionary format with address data
-                parsed_results = []
-                for i, (location, name_components, documents) in enumerate(results_with_state_info):
-                    # Get the corresponding address data
-                    address_data = all_address_data[i] if i < len(all_address_data) else {}
-
-                    # Parse the location string to extract city, state, and CEP
-                    result_dict = parse_result(
-                        location,
-                        name_components,
-                        documents,
-                        state_info=all_state_city_info[i],
-                        address_data=address_data,
-                    )
-                    parsed_results.append(result_dict)
+                # Use the new batched processing function instead of doing everything at once
+                parsed_results = await process_and_save_in_batches(
+                    all_ceps,
+                    all_state_city_info,
+                    results_with_state_info,
+                    make_api_call,
+                    save_to_jsonl,  # Pass the save_to_jsonl path if saving is requested
+                    append_to_jsonl,
+                    progress_callback,
+                    batch_size=100  # Process in batches of 100 items
+                )
             else:
                 # This is the all_data=True path - we need to handle API calls here as well
                 logger.info(f"Processing all_data=True path with make_api_call={make_api_call}")
