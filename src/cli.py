@@ -22,7 +22,11 @@ SAVE_TO_JSONL = typer.Option(None, '--save-to-jsonl', '-sj', help='Save generate
 APPEND_TO_JSONL = typer.Option(True, '--append', '-ap', help='Append to JSONL file instead of overwriting', rich_help_panel='Basic Options')
 # New convenience options
 BATCH = typer.Option(
-    None, '--batch', '-b', help='Process in batches of this size (saves after each batch)', rich_help_panel='Basic Options'
+    None,
+    '--batch',
+    '-b',
+    help='Maximum samples per batch before saving (processes large requests in smaller chunks)',
+    rich_help_panel='Basic Options',
 )
 EASY = typer.Option(
     None, '--easy', '-e', help='Easy mode with integer qty (enables API calls, all data, and auto-saves)', rich_help_panel='Basic Options'
@@ -352,7 +356,7 @@ def sample(
         locations_path: Path to locations data JSON file
         save_to_jsonl: Path to save generated samples as JSONL
         all_data: Include all possible data in the generated samples
-        batch: Batch mode with custom quantity
+        batch: Maximum number of samples per batch before saving to file
         easy: Easy mode with integer qty (enables API calls, all data, and auto-saves)
         append_to_jsonl: Append to JSONL file instead of overwriting
 
@@ -376,12 +380,18 @@ def sample(
                 console.print(f'[yellow]Creating output directory: {output_dir}[/yellow]')
                 os.makedirs(output_dir)
 
-        # Process batch mode if enabled
-        if batch is not None:
-            # Use the specified batch size, or default to 50 if batch is set to 0
-            batch_size = batch if batch > 0 else 50
-            console.print(f'[bold blue]Batch mode enabled for {batch_size} samples[/bold blue]')
-            qty = batch_size
+        # Set up batch processing if enabled
+        use_batches = False
+        batch_size = 0
+
+        if batch is not None and batch > 0 and save_to_jsonl:
+            batch_size = min(batch, qty)  # Ensure batch size doesn't exceed total quantity
+            use_batches = batch_size < qty  # Only use batches if we have multiple batches
+
+            if use_batches:
+                console.print(f'[bold blue]Processing {qty} samples in batches of {batch_size}[/bold blue]')
+            else:
+                console.print(f'[bold blue]Batch size ({batch_size}) equals or exceeds total quantity ({qty})[/bold blue]')
 
         # Show configuration summary for batch or easy modes
         if batch is not None or easy is not None:
@@ -394,14 +404,148 @@ def sample(
             if save_to_jsonl:
                 save_mode = '[green]append[/]' if append_to_jsonl else '[yellow]overwrite[/]'
                 config_summary.append(f'Save to: [cyan]{save_to_jsonl}[/] ({save_mode})')
+                if use_batches:
+                    config_summary.append(f'Batch size: [cyan]{batch_size}[/] samples')
 
             console.print('[bold]Configuration:[/bold]')
             for item in config_summary:
                 console.print(f'  [cyan]•[/cyan] {item}')
             console.print()
 
-        # Use progress display for batch mode or larger quantities
-        if batch is not None or easy is not None or qty > 10:
+        # Process in batches or as a single run
+        all_results = []
+
+        if use_batches:
+            # Use batched processing with progress display
+            with Progress(
+                SpinnerColumn(),
+                TextColumn('[bold blue]{task.description}'),
+                BarColumn(complete_style='green', finished_style='green'),
+                TaskProgressColumn(),
+                TextColumn('{task.fields[status]}'),
+                console=console,
+            ) as progress:
+                main_task = progress.add_task('[green]Generating samples...', total=qty, status='')
+                api_task = None
+                if make_api_call:
+                    api_task = progress.add_task('[yellow]API calls...', visible=False, total=1.0, status='')
+                batch_task = progress.add_task('[cyan]Batch progress...', total=batch_size, visible=False, status='')
+
+                # Keep track of total progress across batches
+                samples_completed = 0
+
+                # Process each batch
+                first_batch = True
+                while samples_completed < qty:
+                    # Calculate batch size for this iteration
+                    current_batch_size = min(batch_size, qty - samples_completed)
+
+                    # Update progress displays
+                    progress.update(
+                        batch_task,
+                        description=f'[cyan]Batch {samples_completed // batch_size + 1}/{(qty + batch_size - 1) // batch_size}...',
+                        total=current_batch_size,
+                        completed=0,
+                        visible=True,
+                    )
+
+                    # Create a progress callback that updates both total and batch progress
+                    def progress_callback(completed: int, stage: str = None) -> None:
+                        # Calculate total progress
+                        total_completed = min(samples_completed + completed, qty)
+
+                        # Update total progress
+                        progress.update(
+                            main_task,
+                            completed=total_completed,
+                            status=f'[dim cyan]{stage or ""} (Batch {samples_completed // batch_size + 1})[/]',
+                        )
+
+                        # Update batch progress
+                        progress.update(batch_task, completed=min(completed, current_batch_size))
+
+                        # Update API task if relevant
+                        if api_task and stage:
+                            if 'API' in stage:
+                                progress.update(api_task, visible=True)
+                                if 'starting' in stage.lower():
+                                    progress.update(api_task, completed=0.2, status='[yellow]Connecting...[/]')
+                                elif 'processing' in stage.lower():
+                                    progress.update(api_task, completed=0.6, status='[yellow]Processing...[/]')
+                                elif 'completed' in stage.lower():
+                                    progress.update(api_task, completed=1.0, status='[green]Done[/]')
+
+                    # Process the current batch
+                    batch_results = sampler_sample(
+                        qty=current_batch_size,
+                        q=None,
+                        city_only=city_only,
+                        state_abbr_only=state_abbr_only,
+                        state_full_only=state_full_only,
+                        only_cep=only_cep,
+                        cep_without_dash=cep_without_dash,
+                        make_api_call=make_api_call,
+                        time_period=time_period,
+                        return_only_name=return_only_name,
+                        name_raw=name_raw,
+                        json_path=json_path,
+                        names_path=names_path,
+                        middle_names_path=middle_names_path,
+                        only_surname=only_surname,
+                        top_40=top_40,
+                        with_only_one_surname=with_only_one_surname,
+                        always_middle=always_middle,
+                        only_middle=only_middle,
+                        always_cpf=always_cpf,
+                        always_pis=always_pis,
+                        always_cnpj=always_cnpj,
+                        always_cei=always_cei,
+                        always_rg=always_rg,
+                        always_phone=always_phone,
+                        only_cpf=only_cpf,
+                        only_pis=only_pis,
+                        only_cnpj=only_cnpj,
+                        only_cei=only_cei,
+                        only_rg=only_rg,
+                        only_fone=only_fone,
+                        include_issuer=include_issuer,
+                        only_document=only_document,
+                        surnames_path=surnames_path,
+                        locations_path=locations_path,
+                        save_to_jsonl=save_to_jsonl,
+                        all_data=all_data,
+                        progress_callback=progress_callback,
+                        append_to_jsonl=(append_to_jsonl or not first_batch),  # Force append for all batches after the first
+                    )
+
+                    # Force append mode after the first batch
+                    first_batch = False
+
+                    # Save this batch's results
+                    if isinstance(batch_results, list):
+                        all_results.extend(batch_results)
+                    else:
+                        all_results.append(batch_results)
+
+                    # Update completed count
+                    samples_completed += current_batch_size
+
+                    # Mark the batch as completed
+                    progress.update(batch_task, completed=current_batch_size, status=f'[green]Completed - Saved to {save_to_jsonl}[/]')
+
+                # All batches are complete
+                progress.update(main_task, completed=qty, status='[bold green]All batches completed![/]')
+                progress.update(batch_task, visible=False)
+                if api_task:
+                    progress.update(api_task, visible=False)
+
+                # Show completion message
+                console.print(f'\n[bold green]✓[/] {qty} samples generated successfully in {(qty + batch_size - 1) // batch_size} batches!')
+                if save_to_jsonl:
+                    console.print(f'[bold green]✓[/] All results saved to [cyan]{save_to_jsonl}[/]')
+
+        else:
+            # Standard processing (non-batched) with progress display for larger quantities
             with Progress(
                 SpinnerColumn(),
                 TextColumn('[bold blue]{task.description}'),
@@ -415,7 +559,7 @@ def sample(
                 # Create a task for API calls if make_api_call is true
                 api_task = None
                 if make_api_call:
-                    api_task = progress.add_task('[yellow]Preparing API calls...', visible=False, total=1.0, status='')
+                    api_task = progress.add_task('[yellow]API calls...', visible=False, total=1.0, status='')
 
                 # Call the sample function with progress updates
                 def progress_callback(completed: int, stage: str = None) -> None:
@@ -427,14 +571,14 @@ def sample(
                         if 'API' in stage:
                             progress.update(api_task, visible=True)
                             if 'starting' in stage.lower():
-                                progress.update(api_task, completed=0.2, status='[yellow]Connecting to API...[/]')
+                                progress.update(api_task, completed=0.2, status='[yellow]Connecting...[/]')
                             elif 'processing' in stage.lower():
-                                progress.update(api_task, completed=0.6, status='[yellow]Processing responses...[/]')
+                                progress.update(api_task, completed=0.6, status='[yellow]Processing...[/]')
                             elif 'completed' in stage.lower():
-                                progress.update(api_task, completed=1.0, status='[green]API calls completed[/]')
+                                progress.update(api_task, completed=1.0, status='[green]Done[/]')
 
                 # Call the sample function from the sampler module with all parameters
-                parsed_results = sampler_sample(
+                all_results = sampler_sample(
                     qty=qty,
                     q=None,  # We don't use this alias in the CLI
                     city_only=city_only,
@@ -485,53 +629,11 @@ def sample(
                 console.print('\n[bold green]✓[/] Sample generation completed successfully!')
                 if save_to_jsonl:
                     console.print(f'[bold green]✓[/] Results saved to [cyan]{save_to_jsonl}[/]')
-        else:
-            # Standard call without progress display for smaller quantities
-            parsed_results = sampler_sample(
-                qty=qty,
-                q=None,  # We don't use this alias in the CLI
-                city_only=city_only,
-                state_abbr_only=state_abbr_only,
-                state_full_only=state_full_only,
-                only_cep=only_cep,
-                cep_without_dash=cep_without_dash,
-                make_api_call=make_api_call,
-                time_period=time_period,
-                return_only_name=return_only_name,
-                name_raw=name_raw,
-                json_path=json_path,
-                names_path=names_path,
-                middle_names_path=middle_names_path,
-                only_surname=only_surname,
-                top_40=top_40,
-                with_only_one_surname=with_only_one_surname,
-                always_middle=always_middle,
-                only_middle=only_middle,
-                always_cpf=always_cpf,
-                always_pis=always_pis,
-                always_cnpj=always_cnpj,
-                always_cei=always_cei,
-                always_rg=always_rg,
-                always_phone=always_phone,
-                only_cpf=only_cpf,
-                only_pis=only_pis,
-                only_cnpj=only_cnpj,
-                only_cei=only_cei,
-                only_rg=only_rg,
-                only_fone=only_fone,
-                include_issuer=include_issuer,
-                only_document=only_document,
-                surnames_path=surnames_path,
-                locations_path=locations_path,
-                save_to_jsonl=save_to_jsonl,
-                all_data=all_data,
-                append_to_jsonl=append_to_jsonl,
-            )
 
         # Convert parsed results back to the format expected by create_results_table
         results = []
-        if isinstance(parsed_results, list):
-            for result in parsed_results:
+        if isinstance(all_results, list):
+            for result in all_results:
                 # Create a NameComponents object
                 name_components = NameComponents(
                     result['name'], result['middle_name'] if result['middle_name'] else None, result['surnames']
@@ -549,6 +651,8 @@ def sample(
                     documents['cnpj'] = result['cnpj']
                 if result.get('cei'):
                     documents['cei'] = result['cei']
+                if result.get('phone'):
+                    documents['phone'] = result['phone']
 
                 # Create a location string
                 location = None
@@ -594,45 +698,47 @@ def sample(
         else:
             # Single result
             name_components = NameComponents(
-                parsed_results['name'], parsed_results['middle_name'] if parsed_results['middle_name'] else None, parsed_results['surnames']
+                all_results['name'], all_results['middle_name'] if all_results['middle_name'] else None, all_results['surnames']
             )
 
             documents = {}
-            if parsed_results['cpf']:
-                documents['cpf'] = parsed_results['cpf']
-            if parsed_results['rg']:
-                documents['rg'] = parsed_results['rg']
-            if parsed_results.get('pis'):
-                documents['pis'] = parsed_results['pis']
-            if parsed_results.get('cnpj'):
-                documents['cnpj'] = parsed_results['cnpj']
-            if parsed_results.get('cei'):
-                documents['cei'] = parsed_results['cei']
+            if all_results['cpf']:
+                documents['cpf'] = all_results['cpf']
+            if all_results['rg']:
+                documents['rg'] = all_results['rg']
+            if all_results.get('pis'):
+                documents['pis'] = all_results['pis']
+            if all_results.get('cnpj'):
+                documents['cnpj'] = all_results['cnpj']
+            if all_results.get('cei'):
+                documents['cei'] = all_results['cei']
+            if all_results.get('phone'):
+                documents['phone'] = all_results['phone']
 
             location = None
-            if parsed_results['city'] or parsed_results['state'] or parsed_results['state_abbr'] or parsed_results['cep']:
+            if all_results['city'] or all_results['state'] or all_results['state_abbr'] or all_results['cep']:
                 # Reconstruct location based on what's available
-                if only_cep and parsed_results['cep']:
-                    location = parsed_results['cep']
-                elif city_only and parsed_results['city']:
-                    location = parsed_results['city']
-                elif state_abbr_only and parsed_results['state_abbr']:
-                    location = parsed_results['state_abbr']
-                elif state_full_only and parsed_results['state']:
-                    location = parsed_results['state']
+                if only_cep and all_results['cep']:
+                    location = all_results['cep']
+                elif city_only and all_results['city']:
+                    location = all_results['city']
+                elif state_abbr_only and all_results['state_abbr']:
+                    location = all_results['state_abbr']
+                elif state_full_only and all_results['state']:
+                    location = all_results['state']
                 else:
                     # Try to reconstruct full location
-                    city_part = parsed_results['city']
-                    state_part = parsed_results['state']
-                    if parsed_results['cep']:
-                        cep_part = parsed_results['cep']
-                        if parsed_results['state_abbr'] and state_part:
-                            state_abbr_part = f' ({parsed_results["state_abbr"]})'
+                    city_part = all_results['city']
+                    state_part = all_results['state']
+                    if all_results['cep']:
+                        cep_part = all_results['cep']
+                        if all_results['state_abbr'] and state_part:
+                            state_abbr_part = f' ({all_results["state_abbr"]})'
                             full_location = f'{city_part}, {state_part}{state_abbr_part} - {cep_part}'
                         else:
                             full_location = f'{city_part} - {cep_part}'
 
-                    if parsed_results['state_abbr']:
+                    if all_results['state_abbr']:
                         state_part += f' ({state_abbr_part})'
 
                     if city_part and state_part:
@@ -644,14 +750,14 @@ def sample(
 
             # Create address data dictionary
             address_data = {}
-            if parsed_results.get('street'):
-                address_data['street'] = parsed_results['street']
-            if parsed_results.get('neighborhood'):
-                address_data['neighborhood'] = parsed_results['neighborhood']
-            if parsed_results.get('building_number'):
-                address_data['building_number'] = parsed_results['building_number']
-            if parsed_results.get('phone'):
-                address_data['phone'] = parsed_results['phone']
+            if all_results.get('street'):
+                address_data['street'] = all_results['street']
+            if all_results.get('neighborhood'):
+                address_data['neighborhood'] = all_results['neighborhood']
+            if all_results.get('building_number'):
+                address_data['building_number'] = all_results['building_number']
+            if all_results.get('phone'):
+                address_data['phone'] = all_results['phone']
 
             results.append((location, name_components, documents, address_data))
 
