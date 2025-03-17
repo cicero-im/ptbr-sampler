@@ -8,6 +8,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import aiofiles
+
 from src.utils.address_for_offline import AddressProvider_for_offline
 from src.utils.phone import generate_phone_number
 
@@ -91,16 +93,23 @@ def parse_result(
     return result
 
 
-def save_to_jsonl_file(data: list[dict], filename: str) -> None:
-    """Save generated samples to a JSONL file.
+async def save_to_jsonl_file(data: list[dict], filename: str, append: bool = False) -> None:
+    """Save generated samples to a JSONL file asynchronously.
 
     Args:
         data: List of dictionaries containing sample data
         filename: Path to the output JSONL file
+        append: If True, append to existing file instead of overwriting
     """
-    with Path(filename).open('w', encoding='utf-8') as f:
+    mode = 'a' if append else 'w'
+
+    # Create a directory for the file if it doesn't exist
+    file_path = Path(filename)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    async with aiofiles.open(file_path, mode, encoding='utf-8') as f:
         for item in data:
-            f.write(json.dumps(item, ensure_ascii=False) + '\n')
+            await f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 
 async def get_address_data_batch(ceps: list[str], make_api_call: bool = False) -> list[dict]:
@@ -231,6 +240,7 @@ def sample(
     save_to_jsonl: str | None,
     all_data: bool,
     progress_callback: callable = None,
+    append_to_jsonl: bool = False,
 ) -> dict | list[dict]:
     """Generate random Brazilian samples with comprehensive information.
 
@@ -275,6 +285,7 @@ def sample(
         save_to_jsonl: Path to save generated samples as JSONL
         all_data: Include all possible data in the generated samples
         progress_callback: Optional callback function to report progress (takes completed count as parameter)
+        append_to_jsonl: If True, append to existing JSONL file instead of overwriting
 
     Returns:
         Dictionary or list of dictionaries containing the generated samples
@@ -590,9 +601,13 @@ def sample(
         # Save to JSONL if requested
         if save_to_jsonl:
             if isinstance(parsed_results, list):
-                save_to_jsonl_file(parsed_results, save_to_jsonl)
+                asyncio.run(save_to_jsonl_file(parsed_results, save_to_jsonl, append=append_to_jsonl))
             else:
-                save_to_jsonl_file([parsed_results], save_to_jsonl)
+                asyncio.run(save_to_jsonl_file([parsed_results], save_to_jsonl, append=append_to_jsonl))
+
+        # Final progress update to indicate completion
+        if progress_callback:
+            progress_callback(actual_qty)
 
         return parsed_results[0] if actual_qty == 1 else parsed_results
     except Exception as e:
