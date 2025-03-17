@@ -2,28 +2,36 @@ import os
 import sys
 from datetime import timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import typer
 from loguru import logger
+from ptbr_sampler.name_generator import NameComponents, TimePeriod
+from ptbr_sampler.sampler import sample as sampler_sample
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.table import Table
 
-from src.br_name_class import NameComponents, TimePeriod
+# Configure logger
+logger.remove()  # Remove default handler
+logger.add(
+    sys.stderr,
+    colorize=True,
+    format='<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}:{line}</cyan> - <level>{message}</level>',
+    filter=lambda record: record['level'].name != 'DEBUG',
+    level='INFO',
+    backtrace=True,
+    diagnose=True,
+)
 
-# Import the sample function from the sampler module
-from src.sampler import sample as sampler_sample
+# Configure Brasilia timezone (UTC-3)
+BRASILIA_TZ = timezone(timedelta(hours=-3))
 
-# Configure loguru logger
-# Remove default handler
-logger.remove()
-# Add custom handler with Brasilia timezone (UTC-3)
-brasilia_tz = timezone(timedelta(hours=-3))
-log_format = '<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{file}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>'
-logger.configure(handlers=[{'sink': sys.stderr, 'format': log_format, 'colorize': True}])
+# Configure logger with Brasilia timezone
+logger.configure(extra={'timezone': BRASILIA_TZ})
 
-app = typer.Typer(help='Brazilian Location, Name and Document Sampler CLI')
 console = Console()
+app = typer.Typer(help='BR data sampler CLI', add_completion=False)
 
 # Define options at module level organized by panels
 # Basic options
@@ -161,12 +169,11 @@ def _format_document_lines(doc: dict[str, str]) -> list[str]:
 
 
 def create_results_table(
-    results: list[tuple[str, NameComponents, dict[str, str], dict[str, str]] | str],
+    results: list[tuple[str | None, NameComponents, dict[str, Any], dict[str, Any]]],
     title: str,
     return_only_name: bool = False,
     only_location: bool = False,
     only_document: bool = False,
-    sanitize: bool = False,
 ) -> Table:
     """Create a formatted table for displaying Brazilian sample data results.
 
@@ -179,12 +186,10 @@ def create_results_table(
                 - NameComponents object (first_name, middle_name, surname)
                 - Dictionary of documents
                 - Dictionary of address data (street, neighborhood, building_number)
-                OR a plain string for simple results
         title: The title to display at the top of the table
         return_only_name: If True, displays only name information
         only_location: If True, displays only location information
         only_document: If True, displays only document information
-        sanitize: If True, uses English column names instead of Portuguese
 
     Returns:
         Rich Table object formatted according to specifications
@@ -211,19 +216,19 @@ def create_results_table(
     table.add_column('Id', justify='right', style='yellow', no_wrap=True, width=5)
 
     if only_document:
-        table.add_column('Documentos' if not sanitize else 'Documents', style='yellow', overflow='fold', max_width=50)
+        table.add_column('Documentos', style='yellow', overflow='fold', max_width=50)
     else:
         if not only_location:
             # Name columns
-            table.add_column('Nome' if not sanitize else 'Name', style='yellow', width=21)
-            table.add_column('Nome do Meio' if not sanitize else 'Middle', style='yellow', width=22)
-            table.add_column('Sobrenome' if not sanitize else 'Surname', style='yellow', width=23)
+            table.add_column('Nome', style='yellow', width=21)
+            table.add_column('Nome do Meio', style='yellow', width=22)
+            table.add_column('Sobrenome', style='yellow', width=23)
 
         if not return_only_name:
             # Location and documents columns
-            table.add_column('Local' if not sanitize else 'Place', style='yellow', width=30)
-            table.add_column('Logradouro' if not sanitize else 'Address', style='yellow', width=50)
-            table.add_column('Documentos' if not sanitize else 'Documents', style='yellow', overflow='fold', width=28)
+            table.add_column('Local', style='yellow', width=30)
+            table.add_column('Logradouro', style='yellow', width=50)
+            table.add_column('Documentos', style='yellow', overflow='fold', width=28)
 
     # Process and add rows
     for idx, result in enumerate(results, 1):
@@ -379,6 +384,7 @@ def sample(
         # Process easy mode if specified
         if easy is not None:
             console.print('[bold green]Easy mode enabled[/bold green]')
+            logger.info(f'Easy mode enabled with quantity: {easy}')
             qty = easy
             make_api_call = True
             all_data = True
@@ -389,6 +395,7 @@ def sample(
             output_dir = os.path.dirname(save_to_jsonl)
             if output_dir and not os.path.exists(output_dir):
                 console.print(f'[yellow]Creating output directory: {output_dir}[/yellow]')
+                logger.info(f'Creating output directory: {output_dir}')
                 os.makedirs(output_dir)
 
         # Set up batch processing if enabled
@@ -401,8 +408,10 @@ def sample(
 
             if use_batches:
                 console.print(f'[bold blue]Processing {qty} samples in batches of {batch_size}[/bold blue]')
+                logger.info(f'Batch mode enabled: {qty} samples in batches of {batch_size}')
             else:
                 console.print(f'[bold blue]Batch size ({batch_size}) equals or exceeds total quantity ({qty})[/bold blue]')
+                logger.info(f'Single batch mode: batch size {batch_size} >= quantity {qty}')
 
         # Show configuration summary for batch or easy modes
         if batch is not None or easy is not None:
@@ -418,6 +427,9 @@ def sample(
                 if use_batches:
                     config_summary.append(f'Batch size: [cyan]{batch_size}[/] samples')
 
+            logger.info(
+                f'Configuration: qty={qty}, api={make_api_call}, all_data={all_data}, file={save_to_jsonl}, append={append_to_jsonl}'
+            )
             console.print('[bold]Configuration:[/bold]')
             for item in config_summary:
                 console.print(f'  [cyan]•[/cyan] {item}')
@@ -428,6 +440,7 @@ def sample(
 
         if use_batches:
             # Use batched processing with progress display
+            logger.info(f'Starting batch processing of {qty} samples')
             with Progress(
                 SpinnerColumn(),
                 TextColumn('[bold blue]{task.description}'),
@@ -450,11 +463,15 @@ def sample(
                 while samples_completed < qty:
                     # Calculate batch size for this iteration
                     current_batch_size = min(batch_size, qty - samples_completed)
+                    batch_num = samples_completed // batch_size + 1
+                    total_batches = (qty + batch_size - 1) // batch_size
+
+                    logger.info(f'Processing batch {batch_num}/{total_batches} with {current_batch_size} samples')
 
                     # Update progress displays
                     progress.update(
                         batch_task,
-                        description=f'[cyan]Batch {samples_completed // batch_size + 1}/{(qty + batch_size - 1) // batch_size}...',
+                        description=f'[cyan]Batch {batch_num}/{total_batches}...',
                         total=current_batch_size,
                         completed=0,
                         visible=True,
@@ -465,11 +482,15 @@ def sample(
                         # Calculate total progress
                         total_completed = min(samples_completed + completed, qty)
 
+                        # Log significant progress stages
+                        if stage and completed % max(1, current_batch_size // 5) == 0:
+                            logger.debug(f'Batch {batch_num}: {completed}/{current_batch_size} samples - {stage}')
+
                         # Update total progress
                         progress.update(
                             main_task,
                             completed=total_completed,
-                            status=f'[dim cyan]{stage or ""} (Batch {samples_completed // batch_size + 1})[/]',
+                            status=f'[dim cyan]{stage or ""} (Batch {batch_num})[/]',
                         )
 
                         # Update batch progress
@@ -480,16 +501,139 @@ def sample(
                             if 'API' in stage:
                                 progress.update(api_task, visible=True)
                                 if 'starting' in stage.lower():
+                                    logger.info(f'API calls starting for batch {batch_num}')
                                     progress.update(api_task, completed=0.2, status='[yellow]Connecting...[/]')
                                 elif 'processing' in stage.lower():
+                                    logger.info(f'Processing API responses for batch {batch_num}')
                                     progress.update(api_task, completed=0.6, status='[yellow]Processing...[/]')
                                 elif 'completed' in stage.lower():
+                                    logger.info(f'API calls completed for batch {batch_num}')
                                     progress.update(api_task, completed=1.0, status='[green]Done[/]')
 
                     # Process the current batch
-                    batch_results = sampler_sample(
-                        qty=current_batch_size,
-                        q=None,
+                    try:
+                        batch_results = sampler_sample(
+                            qty=current_batch_size,
+                            q=None,
+                            city_only=city_only,
+                            state_abbr_only=state_abbr_only,
+                            state_full_only=state_full_only,
+                            only_cep=only_cep,
+                            cep_without_dash=cep_without_dash,
+                            make_api_call=make_api_call,
+                            time_period=time_period,
+                            return_only_name=return_only_name,
+                            name_raw=name_raw,
+                            json_path=json_path,
+                            names_path=names_path,
+                            middle_names_path=middle_names_path,
+                            only_surname=only_surname,
+                            top_40=top_40,
+                            with_only_one_surname=with_only_one_surname,
+                            always_middle=always_middle,
+                            only_middle=only_middle,
+                            always_cpf=always_cpf,
+                            always_pis=always_pis,
+                            always_cnpj=always_cnpj,
+                            always_cei=always_cei,
+                            always_rg=always_rg,
+                            always_phone=always_phone,
+                            only_cpf=only_cpf,
+                            only_pis=only_pis,
+                            only_cnpj=only_cnpj,
+                            only_cei=only_cei,
+                            only_rg=only_rg,
+                            only_fone=only_fone,
+                            include_issuer=include_issuer,
+                            only_document=only_document,
+                            surnames_path=surnames_path,
+                            locations_path=locations_path,
+                            save_to_jsonl=save_to_jsonl,
+                            all_data=all_data,
+                            progress_callback=progress_callback,
+                            append_to_jsonl=(append_to_jsonl or not first_batch),  # Force append for all batches after the first
+                        )
+                        logger.info(f'Batch {batch_num} processed successfully')
+                    except Exception as e:
+                        logger.error(f'Error processing batch {batch_num}: {e}')
+                        raise
+
+                    # Force append mode after the first batch
+                    first_batch = False
+
+                    # Save this batch's results
+                    if isinstance(batch_results, list):
+                        all_results.extend(batch_results)
+                    else:
+                        all_results.append(batch_results)
+
+                    # Update completed count
+                    samples_completed += current_batch_size
+
+                    # Mark the batch as completed
+                    progress.update(batch_task, completed=current_batch_size, status=f'[green]Completed - Saved to {save_to_jsonl}[/]')
+
+                    logger.info(f'Batch {batch_num} saved to {save_to_jsonl}')
+
+                # All batches are complete
+                progress.update(main_task, completed=qty, status='[bold green]All batches completed![/]')
+                progress.update(batch_task, visible=False)
+                if api_task:
+                    progress.update(api_task, visible=False)
+
+                # Show completion message
+                total_batches = (qty + batch_size - 1) // batch_size
+                logger.info(f'All {total_batches} batches completed successfully. Total samples: {qty}')
+                console.print(f'\n[bold green]✓[/] {qty} samples generated successfully in {total_batches} batches!')
+                if save_to_jsonl:
+                    console.print(f'[bold green]✓[/] All results saved to [cyan]{save_to_jsonl}[/]')
+
+        else:
+            # Standard processing (non-batched) with progress display for larger quantities
+            logger.info(f'Starting standard (non-batched) processing of {qty} samples')
+            with Progress(
+                SpinnerColumn(),
+                TextColumn('[bold blue]{task.description}'),
+                BarColumn(complete_style='green', finished_style='green'),
+                TaskProgressColumn(),
+                TextColumn('{task.fields[status]}'),
+                console=console,
+            ) as progress:
+                main_task = progress.add_task('[green]Generating samples...', total=qty, status='')
+
+                # Create a task for API calls if make_api_call is true
+                api_task = None
+                if make_api_call:
+                    api_task = progress.add_task('[yellow]API calls...', visible=False, total=1.0, status='')
+
+                # Call the sample function with progress updates
+                def progress_callback(completed: int, stage: str = None) -> None:
+                    # Log significant progress stages
+                    if stage and completed % max(1, qty // 10) == 0:
+                        logger.debug(f'Progress: {completed}/{qty} samples - {stage}')
+
+                    # Update the main task
+                    progress.update(main_task, completed=completed, status=f'[dim cyan]{stage or ""}[/]')
+
+                    # Update API task if relevant
+                    if api_task and stage:
+                        if 'API' in stage:
+                            progress.update(api_task, visible=True)
+                            if 'starting' in stage.lower():
+                                logger.info('API calls starting')
+                                progress.update(api_task, completed=0.2, status='[yellow]Connecting...[/]')
+                            elif 'processing' in stage.lower():
+                                logger.info('Processing API responses')
+                                progress.update(api_task, completed=0.6, status='[yellow]Processing...[/]')
+                            elif 'completed' in stage.lower():
+                                logger.info('API calls completed')
+                                progress.update(api_task, completed=1.0, status='[green]Done[/]')
+
+                # Call the sample function from the sampler module with all parameters
+                try:
+                    all_results = sampler_sample(
+                        qty=qty,
+                        q=None,  # We don't use this alias in the CLI
                         city_only=city_only,
                         state_abbr_only=state_abbr_only,
                         state_full_only=state_full_only,
@@ -526,110 +670,12 @@ def sample(
                         save_to_jsonl=save_to_jsonl,
                         all_data=all_data,
                         progress_callback=progress_callback,
-                        append_to_jsonl=(append_to_jsonl or not first_batch),  # Force append for all batches after the first
+                        append_to_jsonl=append_to_jsonl,
                     )
-
-                    # Force append mode after the first batch
-                    first_batch = False
-
-                    # Save this batch's results
-                    if isinstance(batch_results, list):
-                        all_results.extend(batch_results)
-                    else:
-                        all_results.append(batch_results)
-
-                    # Update completed count
-                    samples_completed += current_batch_size
-
-                    # Mark the batch as completed
-                    progress.update(batch_task, completed=current_batch_size, status=f'[green]Completed - Saved to {save_to_jsonl}[/]')
-
-                # All batches are complete
-                progress.update(main_task, completed=qty, status='[bold green]All batches completed![/]')
-                progress.update(batch_task, visible=False)
-                if api_task:
-                    progress.update(api_task, visible=False)
-
-                # Show completion message
-                console.print(f'\n[bold green]✓[/] {qty} samples generated successfully in {(qty + batch_size - 1) // batch_size} batches!')
-                if save_to_jsonl:
-                    console.print(f'[bold green]✓[/] All results saved to [cyan]{save_to_jsonl}[/]')
-
-        else:
-            # Standard processing (non-batched) with progress display for larger quantities
-            with Progress(
-                SpinnerColumn(),
-                TextColumn('[bold blue]{task.description}'),
-                BarColumn(complete_style='green', finished_style='green'),
-                TaskProgressColumn(),
-                TextColumn('{task.fields[status]}'),
-                console=console,
-            ) as progress:
-                main_task = progress.add_task('[green]Generating samples...', total=qty, status='')
-
-                # Create a task for API calls if make_api_call is true
-                api_task = None
-                if make_api_call:
-                    api_task = progress.add_task('[yellow]API calls...', visible=False, total=1.0, status='')
-
-                # Call the sample function with progress updates
-                def progress_callback(completed: int, stage: str = None) -> None:
-                    # Update the main task
-                    progress.update(main_task, completed=completed, status=f'[dim cyan]{stage or ""}[/]')
-
-                    # Update API task if relevant
-                    if api_task and stage:
-                        if 'API' in stage:
-                            progress.update(api_task, visible=True)
-                            if 'starting' in stage.lower():
-                                progress.update(api_task, completed=0.2, status='[yellow]Connecting...[/]')
-                            elif 'processing' in stage.lower():
-                                progress.update(api_task, completed=0.6, status='[yellow]Processing...[/]')
-                            elif 'completed' in stage.lower():
-                                progress.update(api_task, completed=1.0, status='[green]Done[/]')
-
-                # Call the sample function from the sampler module with all parameters
-                all_results = sampler_sample(
-                    qty=qty,
-                    q=None,  # We don't use this alias in the CLI
-                    city_only=city_only,
-                    state_abbr_only=state_abbr_only,
-                    state_full_only=state_full_only,
-                    only_cep=only_cep,
-                    cep_without_dash=cep_without_dash,
-                    make_api_call=make_api_call,
-                    time_period=time_period,
-                    return_only_name=return_only_name,
-                    name_raw=name_raw,
-                    json_path=json_path,
-                    names_path=names_path,
-                    middle_names_path=middle_names_path,
-                    only_surname=only_surname,
-                    top_40=top_40,
-                    with_only_one_surname=with_only_one_surname,
-                    always_middle=always_middle,
-                    only_middle=only_middle,
-                    always_cpf=always_cpf,
-                    always_pis=always_pis,
-                    always_cnpj=always_cnpj,
-                    always_cei=always_cei,
-                    always_rg=always_rg,
-                    always_phone=always_phone,
-                    only_cpf=only_cpf,
-                    only_pis=only_pis,
-                    only_cnpj=only_cnpj,
-                    only_cei=only_cei,
-                    only_rg=only_rg,
-                    only_fone=only_fone,
-                    include_issuer=include_issuer,
-                    only_document=only_document,
-                    surnames_path=surnames_path,
-                    locations_path=locations_path,
-                    save_to_jsonl=save_to_jsonl,
-                    all_data=all_data,
-                    progress_callback=progress_callback,
-                    append_to_jsonl=append_to_jsonl,
-                )
+                    logger.info(f'All {qty} samples processed successfully')
+                except Exception as e:
+                    logger.error(f'Error processing samples: {e}')
+                    raise
 
                 # Ensure progress is complete
                 progress.update(main_task, completed=qty, status='[bold green]Completed![/]')
@@ -637,189 +683,13 @@ def sample(
                     progress.update(api_task, visible=False)
 
                 # Show completion message
+                logger.info(f'Sample generation completed. Total samples: {qty}')
                 console.print('\n[bold green]✓[/] Sample generation completed successfully!')
                 if save_to_jsonl:
                     console.print(f'[bold green]✓[/] Results saved to [cyan]{save_to_jsonl}[/]')
-
-        # Convert parsed results back to the format expected by create_results_table
-        results = []
-        if isinstance(all_results, list):
-            for result in all_results:
-                # Create a NameComponents object
-                name_components = NameComponents(
-                    result['name'], result['middle_name'] if result['middle_name'] else None, result['surnames']
-                )
-
-                # Create a documents dictionary
-                documents = {}
-                if result['cpf']:
-                    documents['cpf'] = result['cpf']
-                if result['rg']:
-                    documents['rg'] = result['rg']
-                if result.get('pis'):
-                    documents['pis'] = result['pis']
-                if result.get('cnpj'):
-                    documents['cnpj'] = result['cnpj']
-                if result.get('cei'):
-                    documents['cei'] = result['cei']
-                if result.get('phone'):
-                    documents['phone'] = result['phone']
-
-                # Create a location string
-                location = None
-                if result['city'] or result['state'] or result['state_abbr'] or result['cep']:
-                    # Reconstruct location based on what's available
-                    if only_cep and result['cep']:
-                        location = result['cep']
-                    elif city_only and result['city']:
-                        location = result['city']
-                    elif state_abbr_only and result['state_abbr']:
-                        location = result['state_abbr']
-                    elif state_full_only and result['state']:
-                        location = result['state']
-                    else:
-                        # Try to reconstruct full location
-                        city_part = result['city']
-                        if result['cep']:
-                            city_part += f' - {result["cep"]}'
-
-                        state_part = result['state']
-                        if result['state_abbr']:
-                            state_part += f' ({result["state_abbr"]})'
-
-                        if city_part and state_part:
-                            location = f'{city_part}, {state_part}'
-                        elif city_part:
-                            location = city_part
-                        elif state_part:
-                            location = state_part
-
-                # Create address data dictionary
-                address_data = {}
-                if result.get('street'):
-                    address_data['street'] = result['street']
-                if result.get('neighborhood'):
-                    address_data['neighborhood'] = result['neighborhood']
-                if result.get('building_number'):
-                    address_data['building_number'] = result['building_number']
-                if result.get('phone'):
-                    address_data['phone'] = result['phone']
-
-                results.append((location, name_components, documents, address_data))
-        else:
-            # Single result
-            name_components = NameComponents(
-                all_results['name'], all_results['middle_name'] if all_results['middle_name'] else None, all_results['surnames']
-            )
-
-            documents = {}
-            if all_results['cpf']:
-                documents['cpf'] = all_results['cpf']
-            if all_results['rg']:
-                documents['rg'] = all_results['rg']
-            if all_results.get('pis'):
-                documents['pis'] = all_results['pis']
-            if all_results.get('cnpj'):
-                documents['cnpj'] = all_results['cnpj']
-            if all_results.get('cei'):
-                documents['cei'] = all_results['cei']
-            if all_results.get('phone'):
-                documents['phone'] = all_results['phone']
-
-            location = None
-            if all_results['city'] or all_results['state'] or all_results['state_abbr'] or all_results['cep']:
-                # Reconstruct location based on what's available
-                if only_cep and all_results['cep']:
-                    location = all_results['cep']
-                elif city_only and all_results['city']:
-                    location = all_results['city']
-                elif state_abbr_only and all_results['state_abbr']:
-                    location = all_results['state_abbr']
-                elif state_full_only and all_results['state']:
-                    location = all_results['state']
-                else:
-                    # Try to reconstruct full location
-                    city_part = all_results['city']
-                    state_part = all_results['state']
-                    if all_results['cep']:
-                        cep_part = all_results['cep']
-                        if all_results['state_abbr'] and state_part:
-                            state_abbr_part = f' ({all_results["state_abbr"]})'
-                            full_location = f'{city_part}, {state_part}{state_abbr_part} - {cep_part}'
-                        else:
-                            full_location = f'{city_part} - {cep_part}'
-
-                    if all_results['state_abbr']:
-                        state_part += f' ({state_abbr_part})'
-
-                    if city_part and state_part:
-                        location = full_location
-                    elif city_part:
-                        location = city_part
-                    elif state_part:
-                        location = state_part
-
-            # Create address data dictionary
-            address_data = {}
-            if all_results.get('street'):
-                address_data['street'] = all_results['street']
-            if all_results.get('neighborhood'):
-                address_data['neighborhood'] = all_results['neighborhood']
-            if all_results.get('building_number'):
-                address_data['building_number'] = all_results['building_number']
-            if all_results.get('phone'):
-                address_data['phone'] = all_results['phone']
-
-            results.append((location, name_components, documents, address_data))
-
-        # Determine appropriate title based on generation mode
-        if only_document:
-            doc_types = []
-            if only_cpf:
-                doc_types.append('CPF')
-            if only_pis:
-                doc_types.append('PIS')
-            if only_cnpj:
-                doc_types.append('CNPJ')
-            if only_cei:
-                doc_types.append('CEI')
-            if only_rg:
-                doc_types.append('RG')
-            title = f'Random Brazilian {"and ".join(doc_types)} Numbers'
-        elif only_middle:
-            title = 'Random Brazilian Middle Names'
-        elif only_surname:
-            title = f'Random Brazilian Surnames{" (Top 40)" if top_40 else ""}{" (Single)" if with_only_one_surname else ""}'
-        elif return_only_name:
-            title = (
-                f'Random Brazilian Names{" with Middle Names" if always_middle else ""}'
-                f'{" with Single" if with_only_one_surname else " with"} Surname'
-                f' ({time_period.value}{"- Top 40" if top_40 else ""})'
-            )
-        elif city_only:
-            title = 'Random Brazilian City Samples'
-        elif state_abbr_only:
-            title = 'Random Brazilian State Abbreviation Samples'
-        elif state_full_only:
-            title = 'Random Brazilian State Name Samples'
-        elif only_cep:
-            title = f'Random Brazilian CEP Samples{"" if cep_without_dash else " with dash"}'
-        elif all_data:
-            title = 'Complete Brazilian Data Samples'
-        else:
-            title = 'Random Brazilian Location and Document Samples'
-
-        # Create and display the results table
-        table = create_results_table(
-            results=results,
-            title=title,
-            return_only_name=return_only_name or only_surname or only_middle,
-            only_location=any([city_only, state_abbr_only, state_full_only, only_cep]),
-            only_document=only_document,
-        )
-        console.print(table)
-
+                    logger.info(f'Results saved to {save_to_jsonl}')
     except Exception as e:
+        logger.error(f'Error in sample generation: {e}')
         console.print(f'[red]Error: {e!s}[/red]')
         raise typer.Exit(code=1) from e
 
