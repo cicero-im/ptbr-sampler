@@ -19,6 +19,7 @@ console = Console()
 DEFAULT_QTY = typer.Option(1, '--qty', '-q', help='Number of samples to generate', rich_help_panel='Basic Options')
 ALL_DATA = typer.Option(False, '--all', '-a', help='Include all possible data in the generated samples', rich_help_panel='Basic Options')
 SAVE_TO_JSONL = typer.Option(None, '--save-to-jsonl', '-sj', help='Save generated samples to a JSONL file', rich_help_panel='Basic Options')
+APPEND_TO_JSONL = typer.Option(True, '--append', '-ap', help='Append to JSONL file instead of overwriting', rich_help_panel='Basic Options')
 # New convenience options
 BATCH = typer.Option(
     False, '--batch', '-b', help='Enable batch mode for processing larger quantities (default qty: 50)', rich_help_panel='Basic Options'
@@ -309,6 +310,7 @@ def sample(
     all_data: bool = ALL_DATA,
     batch: bool = BATCH,
     easy: int = EASY,
+    append_to_jsonl: bool = APPEND_TO_JSONL,
 ) -> None:
     """Generate random Brazilian samples with comprehensive information.
 
@@ -352,6 +354,7 @@ def sample(
         all_data: Include all possible data in the generated samples
         batch: Enable batch mode for processing larger quantities
         easy: Easy mode with integer qty (enables API calls, all data, and auto-saves)
+        append_to_jsonl: Append to JSONL file instead of overwriting
 
     Raises:
         typer.Exit: If an error occurs during execution
@@ -389,7 +392,7 @@ def sample(
                 f'Always phone: {always_phone}',
             ]
             if save_to_jsonl:
-                config_summary.append(f'Save to: {save_to_jsonl}')
+                config_summary.append(f'Save to: {save_to_jsonl} ({("append" if append_to_jsonl else "overwrite")})')
 
             console.print('[bold]Configuration:[/bold]')
             for item in config_summary:
@@ -447,6 +450,7 @@ def sample(
                     save_to_jsonl=save_to_jsonl,
                     all_data=all_data,
                     progress_callback=progress_callback,
+                    append_to_jsonl=append_to_jsonl,
                 )
 
                 # Ensure progress is complete
@@ -491,6 +495,7 @@ def sample(
                 locations_path=locations_path,
                 save_to_jsonl=save_to_jsonl,
                 all_data=all_data,
+                append_to_jsonl=append_to_jsonl,
             )
 
         # Convert parsed results back to the format expected by create_results_table
