@@ -1,7 +1,10 @@
 import os
+import sys
+from datetime import timedelta, timezone
 from pathlib import Path
 
 import typer
+from loguru import logger
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.table import Table
@@ -10,6 +13,14 @@ from src.br_name_class import NameComponents, TimePeriod
 
 # Import the sample function from the sampler module
 from src.sampler import sample as sampler_sample
+
+# Configure loguru logger
+# Remove default handler
+logger.remove()
+# Add custom handler with Brasilia timezone (UTC-3)
+brasilia_tz = timezone(timedelta(hours=-3))
+log_format = '<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{file}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>'
+logger.configure(handlers=[{'sink': sys.stderr, 'format': log_format, 'colorize': True}])
 
 app = typer.Typer(help='Brazilian Location, Name and Document Sampler CLI')
 console = Console()
