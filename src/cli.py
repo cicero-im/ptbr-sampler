@@ -21,9 +21,7 @@ ALL_DATA = typer.Option(False, '--all', '-a', help='Include all possible data in
 SAVE_TO_JSONL = typer.Option(None, '--save-to-jsonl', '-sj', help='Save generated samples to a JSONL file', rich_help_panel='Basic Options')
 APPEND_TO_JSONL = typer.Option(True, '--append', '-ap', help='Append to JSONL file instead of overwriting', rich_help_panel='Basic Options')
 # New convenience options
-BATCH = typer.Option(
-    False, '--batch', '-b', help='Enable batch mode for processing larger quantities (default qty: 50)', rich_help_panel='Basic Options'
-)
+BATCH = typer.Option(None, '--batch', '-b', help='Batch mode with custom quantity (default: 50)', rich_help_panel='Basic Options')
 EASY = typer.Option(
     None, '--easy', '-e', help='Easy mode with integer qty (enables API calls, all data, and auto-saves)', rich_help_panel='Basic Options'
 )
@@ -308,7 +306,7 @@ def sample(
     locations_path: Path = LOCATIONS_PATH,
     save_to_jsonl: str = SAVE_TO_JSONL,
     all_data: bool = ALL_DATA,
-    batch: bool = BATCH,
+    batch: int = BATCH,
     easy: int = EASY,
     append_to_jsonl: bool = APPEND_TO_JSONL,
 ) -> None:
@@ -352,7 +350,7 @@ def sample(
         locations_path: Path to locations data JSON file
         save_to_jsonl: Path to save generated samples as JSONL
         all_data: Include all possible data in the generated samples
-        batch: Enable batch mode for processing larger quantities
+        batch: Batch mode with custom quantity
         easy: Easy mode with integer qty (enables API calls, all data, and auto-saves)
         append_to_jsonl: Append to JSONL file instead of overwriting
 
@@ -377,38 +375,61 @@ def sample(
                 os.makedirs(output_dir)
 
         # Process batch mode if enabled
-        if batch and qty >= 50:
-            console.print(f'[bold blue]Batch mode enabled for {qty} samples[/bold blue]')
-            # Default qty for batch mode is 50 if not specified higher
-            if qty == 50:
-                console.print('[yellow]Using default batch quantity of 50[/yellow]')
+        if batch is not None:
+            # Use the specified batch size, or default to 50 if batch is set to 0
+            batch_size = batch if batch > 0 else 50
+            console.print(f'[bold blue]Batch mode enabled for {batch_size} samples[/bold blue]')
+            qty = batch_size
 
         # Show configuration summary for batch or easy modes
-        if batch or easy is not None:
+        if batch is not None or easy is not None:
             config_summary = [
                 f'Quantity: {qty}',
-                f'Make API call: {make_api_call}',
-                f'All data: {all_data}',
-                f'Always phone: {always_phone}',
+                f'Make API call: [{"green" if make_api_call else "red"}]{make_api_call}[/]',
+                f'All data: [{"green" if all_data else "red"}]{all_data}[/]',
+                f'Always phone: [{"green" if always_phone else "red"}]{always_phone}[/]',
             ]
             if save_to_jsonl:
-                config_summary.append(f'Save to: {save_to_jsonl} ({("append" if append_to_jsonl else "overwrite")})')
+                save_mode = '[green]append[/]' if append_to_jsonl else '[yellow]overwrite[/]'
+                config_summary.append(f'Save to: [cyan]{save_to_jsonl}[/] ({save_mode})')
 
             console.print('[bold]Configuration:[/bold]')
             for item in config_summary:
-                console.print(f'  [cyan]• {item}[/cyan]')
+                console.print(f'  [cyan]•[/cyan] {item}')
             console.print()
 
         # Use progress display for batch mode or larger quantities
-        if batch or qty > 10:
+        if batch is not None or easy is not None or qty > 10:
             with Progress(
-                SpinnerColumn(), TextColumn('[bold blue]{task.description}'), BarColumn(), TaskProgressColumn(), console=console
+                SpinnerColumn(),
+                TextColumn('[bold blue]{task.description}'),
+                BarColumn(complete_style='green', finished_style='green'),
+                TaskProgressColumn(),
+                TextColumn('{task.fields[status]}'),
+                console=console,
             ) as progress:
-                task = progress.add_task('[green]Generating samples...', total=qty)
+                main_task = progress.add_task('[green]Generating samples...', total=qty, status='')
+
+                # Create a task for API calls if make_api_call is true
+                api_task = None
+                if make_api_call:
+                    api_task = progress.add_task('[yellow]Preparing API calls...', visible=False, total=1.0, status='')
 
                 # Call the sample function with progress updates
-                def progress_callback(completed: int) -> None:
-                    progress.update(task, completed=completed)
+                def progress_callback(completed: int, stage: str = None) -> None:
+                    # Update the main task
+                    progress.update(main_task, completed=completed, status=f'[dim cyan]{stage or ""}[/]')
+
+                    # Update API task if relevant
+                    if api_task and stage:
+                        if 'API' in stage:
+                            progress.update(api_task, visible=True)
+                            if 'starting' in stage.lower():
+                                progress.update(api_task, completed=0.2, status='[yellow]Connecting to API...[/]')
+                            elif 'processing' in stage.lower():
+                                progress.update(api_task, completed=0.6, status='[yellow]Processing responses...[/]')
+                            elif 'completed' in stage.lower():
+                                progress.update(api_task, completed=1.0, status='[green]API calls completed[/]')
 
                 # Call the sample function from the sampler module with all parameters
                 parsed_results = sampler_sample(
@@ -454,7 +475,14 @@ def sample(
                 )
 
                 # Ensure progress is complete
-                progress.update(task, completed=qty)
+                progress.update(main_task, completed=qty, status='[bold green]Completed![/]')
+                if api_task:
+                    progress.update(api_task, visible=False)
+
+                # Show completion message
+                console.print('\n[bold green]✓[/] Sample generation completed successfully!')
+                if save_to_jsonl:
+                    console.print(f'[bold green]✓[/] Results saved to [cyan]{save_to_jsonl}[/]')
         else:
             # Standard call without progress display for smaller quantities
             parsed_results = sampler_sample(
