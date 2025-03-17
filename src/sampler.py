@@ -230,6 +230,7 @@ def sample(
     locations_path: str | Path,
     save_to_jsonl: str | None,
     all_data: bool,
+    progress_callback: callable = None,
 ) -> dict | list[dict]:
     """Generate random Brazilian samples with comprehensive information.
 
@@ -266,16 +267,17 @@ def sample(
         only_cnpj: Generate only CNPJ
         only_cei: Generate only CEI
         only_rg: Generate only RG
+        only_fone: Generate only phone number
         include_issuer: Include issuing state in RG
         only_document: Return only documents
         surnames_path: Path to surnames data file
         locations_path: Path to locations data JSON file
         save_to_jsonl: Path to save generated samples as JSONL
         all_data: Include all possible data in the generated samples
+        progress_callback: Optional callback function to report progress (takes completed count as parameter)
 
     Returns:
-        A dictionary with the generated sample if qty=1, or a list of dictionaries if qty>1.
-        Each dictionary contains keys for name, location, and document information.
+        Dictionary or list of dictionaries containing the generated samples
     """
     # Handle q parameter alias (takes precedence over qty)
     actual_qty = q if q is not None else qty
@@ -345,7 +347,7 @@ def sample(
 
         if only_document:
             # Document-only generation with proper state handling
-            for _ in range(actual_qty):
+            for i in range(actual_qty):
                 documents = {}
 
                 # Generate location first to get proper state for RG
@@ -370,9 +372,13 @@ def sample(
 
                 results.append((None, None, documents))
 
+                # Report progress if callback is provided
+                if progress_callback and i % max(1, actual_qty // 100) == 0:
+                    progress_callback(i + 1)
+
         elif any([only_cpf, only_pis, only_cnpj, only_cei, only_rg, only_fone]):
             # Handle document-only generation with proper state handling
-            for _ in range(actual_qty):
+            for i in range(actual_qty):
                 documents = {}
 
                 # No need to reload location data - already loaded once at the beginning
@@ -397,9 +403,13 @@ def sample(
 
                 results.append((None, None, documents))
 
+                # Report progress if callback is provided
+                if progress_callback and i % max(1, actual_qty // 100) == 0:
+                    progress_callback(i + 1)
+
         elif return_only_name or only_surname or only_middle:
             # Name-only generation
-            for _ in range(actual_qty):
+            for i in range(actual_qty):
                 documents = {}
                 name_components = None
 
@@ -446,9 +456,13 @@ def sample(
                 # Add the location string for name-only results
                 location_str = f'{city_name} - , {state_name} ({state_abbr})'
                 results.append((location_str, name_components, documents))
+
+                # Report progress if callback is provided
+                if progress_callback and i % max(1, actual_qty // 100) == 0:
+                    progress_callback(i + 1)
         else:
             # Full sample generation with location, name, and documents
-            for _ in range(actual_qty):
+            for i in range(actual_qty):
                 documents = {}
 
                 # No need to reload location data - already loaded once at the beginning
@@ -504,9 +518,17 @@ def sample(
 
                 results.append((location, name_components, documents))
 
+                # Report progress if callback is provided
+                if progress_callback and i % max(1, actual_qty // 100) == 0:
+                    progress_callback(i + 1)
+
         # Collect all CEPs that will be used
         all_ceps = []
         all_state_city_info = []
+
+        # Update progress to indicate we're starting address generation
+        if progress_callback:
+            progress_callback(actual_qty // 2)  # Show approximately half-way progress
 
         # For all types of generation
         for i in range(actual_qty):
@@ -520,8 +542,16 @@ def sample(
             formatted_cep = location_sampler._format_cep(cep, not cep_without_dash)
             all_ceps.append(formatted_cep)
 
+        # Update progress to indicate we're making API calls if applicable
+        if progress_callback and make_api_call:
+            progress_callback(actual_qty * 3 // 4)  # Show approximately 75% progress
+
         # Get address data for all CEPs at once
         address_data_list = asyncio.run(get_address_data_batch(all_ceps, make_api_call))
+
+        # Update progress to indicate we're finalizing results
+        if progress_callback:
+            progress_callback(actual_qty * 9 // 10)  # Show approximately 90% progress
 
         # Modify the results to include state_info and address data
         results_with_state_info = []

@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.table import Table
 
 from src.br_name_class import NameComponents, TimePeriod
@@ -17,6 +19,13 @@ console = Console()
 DEFAULT_QTY = typer.Option(1, '--qty', '-q', help='Number of samples to generate', rich_help_panel='Basic Options')
 ALL_DATA = typer.Option(False, '--all', '-a', help='Include all possible data in the generated samples', rich_help_panel='Basic Options')
 SAVE_TO_JSONL = typer.Option(None, '--save-to-jsonl', '-sj', help='Save generated samples to a JSONL file', rich_help_panel='Basic Options')
+# New convenience options
+BATCH = typer.Option(
+    False, '--batch', '-b', help='Enable batch mode for processing larger quantities (default qty: 50)', rich_help_panel='Basic Options'
+)
+EASY = typer.Option(
+    None, '--easy', '-e', help='Easy mode with integer qty (enables API calls, all data, and auto-saves)', rich_help_panel='Basic Options'
+)
 
 # Location options
 CITY_ONLY = typer.Option(False, '--city-only', '-c', help='Return only city names', rich_help_panel='Location Options')
@@ -298,6 +307,8 @@ def sample(
     locations_path: Path = LOCATIONS_PATH,
     save_to_jsonl: str = SAVE_TO_JSONL,
     all_data: bool = ALL_DATA,
+    batch: bool = BATCH,
+    easy: int = EASY,
 ) -> None:
     """Generate random Brazilian samples with comprehensive information.
 
@@ -339,52 +350,148 @@ def sample(
         locations_path: Path to locations data JSON file
         save_to_jsonl: Path to save generated samples as JSONL
         all_data: Include all possible data in the generated samples
+        batch: Enable batch mode for processing larger quantities
+        easy: Easy mode with integer qty (enables API calls, all data, and auto-saves)
 
     Raises:
         typer.Exit: If an error occurs during execution
     """
 
     try:
-        # Call the sample function from the sampler module with all parameters
-        parsed_results = sampler_sample(
-            qty=qty,
-            q=None,  # We don't use this alias in the CLI
-            city_only=city_only,
-            state_abbr_only=state_abbr_only,
-            state_full_only=state_full_only,
-            only_cep=only_cep,
-            cep_without_dash=cep_without_dash,
-            make_api_call=make_api_call,
-            time_period=time_period,
-            return_only_name=return_only_name,
-            name_raw=name_raw,
-            json_path=json_path,
-            names_path=names_path,
-            middle_names_path=middle_names_path,
-            only_surname=only_surname,
-            top_40=top_40,
-            with_only_one_surname=with_only_one_surname,
-            always_middle=always_middle,
-            only_middle=only_middle,
-            always_cpf=always_cpf,
-            always_pis=always_pis,
-            always_cnpj=always_cnpj,
-            always_cei=always_cei,
-            always_rg=always_rg,
-            always_phone=always_phone,
-            only_cpf=only_cpf,
-            only_pis=only_pis,
-            only_cnpj=only_cnpj,
-            only_cei=only_cei,
-            only_rg=only_rg,
-            only_fone=only_fone,
-            include_issuer=include_issuer,
-            only_document=only_document,
-            surnames_path=surnames_path,
-            locations_path=locations_path,
-            save_to_jsonl=save_to_jsonl,
-            all_data=all_data,
-        )
+        # Process easy mode if specified
+        if easy is not None:
+            console.print('[bold green]Easy mode enabled[/bold green]')
+            qty = easy
+            make_api_call = True
+            all_data = True
+            always_phone = True
+            save_to_jsonl = 'output/output.jsonl'
+
+            # Ensure output directory exists
+            output_dir = os.path.dirname(save_to_jsonl)
+            if output_dir and not os.path.exists(output_dir):
+                console.print(f'[yellow]Creating output directory: {output_dir}[/yellow]')
+                os.makedirs(output_dir)
+
+        # Process batch mode if enabled
+        if batch and qty >= 50:
+            console.print(f'[bold blue]Batch mode enabled for {qty} samples[/bold blue]')
+            # Default qty for batch mode is 50 if not specified higher
+            if qty == 50:
+                console.print('[yellow]Using default batch quantity of 50[/yellow]')
+
+        # Show configuration summary for batch or easy modes
+        if batch or easy is not None:
+            config_summary = [
+                f'Quantity: {qty}',
+                f'Make API call: {make_api_call}',
+                f'All data: {all_data}',
+                f'Always phone: {always_phone}',
+            ]
+            if save_to_jsonl:
+                config_summary.append(f'Save to: {save_to_jsonl}')
+
+            console.print('[bold]Configuration:[/bold]')
+            for item in config_summary:
+                console.print(f'  [cyan]• {item}[/cyan]')
+            console.print()
+
+        # Use progress display for batch mode or larger quantities
+        if batch or qty > 10:
+            with Progress(
+                SpinnerColumn(), TextColumn('[bold blue]{task.description}'), BarColumn(), TaskProgressColumn(), console=console
+            ) as progress:
+                task = progress.add_task('[green]Generating samples...', total=qty)
+
+                # Call the sample function with progress updates
+                def progress_callback(completed: int) -> None:
+                    progress.update(task, completed=completed)
+
+                # Call the sample function from the sampler module with all parameters
+                parsed_results = sampler_sample(
+                    qty=qty,
+                    q=None,  # We don't use this alias in the CLI
+                    city_only=city_only,
+                    state_abbr_only=state_abbr_only,
+                    state_full_only=state_full_only,
+                    only_cep=only_cep,
+                    cep_without_dash=cep_without_dash,
+                    make_api_call=make_api_call,
+                    time_period=time_period,
+                    return_only_name=return_only_name,
+                    name_raw=name_raw,
+                    json_path=json_path,
+                    names_path=names_path,
+                    middle_names_path=middle_names_path,
+                    only_surname=only_surname,
+                    top_40=top_40,
+                    with_only_one_surname=with_only_one_surname,
+                    always_middle=always_middle,
+                    only_middle=only_middle,
+                    always_cpf=always_cpf,
+                    always_pis=always_pis,
+                    always_cnpj=always_cnpj,
+                    always_cei=always_cei,
+                    always_rg=always_rg,
+                    always_phone=always_phone,
+                    only_cpf=only_cpf,
+                    only_pis=only_pis,
+                    only_cnpj=only_cnpj,
+                    only_cei=only_cei,
+                    only_rg=only_rg,
+                    only_fone=only_fone,
+                    include_issuer=include_issuer,
+                    only_document=only_document,
+                    surnames_path=surnames_path,
+                    locations_path=locations_path,
+                    save_to_jsonl=save_to_jsonl,
+                    all_data=all_data,
+                    progress_callback=progress_callback,
+                )
+
+                # Ensure progress is complete
+                progress.update(task, completed=qty)
+        else:
+            # Standard call without progress display for smaller quantities
+            parsed_results = sampler_sample(
+                qty=qty,
+                q=None,  # We don't use this alias in the CLI
+                city_only=city_only,
+                state_abbr_only=state_abbr_only,
+                state_full_only=state_full_only,
+                only_cep=only_cep,
+                cep_without_dash=cep_without_dash,
+                make_api_call=make_api_call,
+                time_period=time_period,
+                return_only_name=return_only_name,
+                name_raw=name_raw,
+                json_path=json_path,
+                names_path=names_path,
+                middle_names_path=middle_names_path,
+                only_surname=only_surname,
+                top_40=top_40,
+                with_only_one_surname=with_only_one_surname,
+                always_middle=always_middle,
+                only_middle=only_middle,
+                always_cpf=always_cpf,
+                always_pis=always_pis,
+                always_cnpj=always_cnpj,
+                always_cei=always_cei,
+                always_rg=always_rg,
+                always_phone=always_phone,
+                only_cpf=only_cpf,
+                only_pis=only_pis,
+                only_cnpj=only_cnpj,
+                only_cei=only_cei,
+                only_rg=only_rg,
+                only_fone=only_fone,
+                include_issuer=include_issuer,
+                only_document=only_document,
+                surnames_path=surnames_path,
+                locations_path=locations_path,
+                save_to_jsonl=save_to_jsonl,
+                all_data=all_data,
+            )
 
         # Convert parsed results back to the format expected by create_results_table
         results = []
