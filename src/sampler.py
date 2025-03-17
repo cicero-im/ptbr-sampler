@@ -112,13 +112,14 @@ async def save_to_jsonl_file(data: list[dict], filename: str, append: bool = Tru
             await f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 
-async def get_address_data_batch(ceps: list[str], make_api_call: bool = False) -> list[dict]:
+async def get_address_data_batch(ceps: list[str], make_api_call: bool = False, progress_callback: callable = None) -> list[dict]:
     """
     Get address data for multiple CEPs, either from API or generated.
 
     Args:
         ceps: List of CEPs to get address data for
         make_api_call: Whether to make API calls or generate data
+        progress_callback: Optional callback function to report progress
 
     Returns:
         List of dictionaries with address data (street, neighborhood, building_number)
@@ -132,11 +133,19 @@ async def get_address_data_batch(ceps: list[str], make_api_call: bool = False) -
         # Format CEPs to remove dashes before API call
         formatted_ceps = [cep.replace('-', '') for cep in ceps]
 
+        # Update progress if callback is provided
+        if progress_callback:
+            progress_callback(0, 'API calls: Connecting to service')
+
         # Get data from API
         cep_data_list = await workers_for_multiple_cep(formatted_ceps)
 
+        # Update progress if callback is provided
+        if progress_callback:
+            progress_callback(0, 'API calls: Processing responses')
+
         # Process each CEP result
-        for cep_data in cep_data_list:
+        for i, cep_data in enumerate(cep_data_list):
             address_data = {
                 'street': '',
                 'neighborhood': '',
@@ -166,9 +175,13 @@ async def get_address_data_batch(ceps: list[str], make_api_call: bool = False) -
             address_data['building_number'] = address_provider.building_number()
 
             address_data_list.append(address_data)
+
+            # Update progress occasionally if callback is provided
+            if progress_callback and i % max(1, len(cep_data_list) // 10) == 0:
+                progress_callback(0, f'API calls: Processed {i + 1}/{len(cep_data_list)} addresses')
     else:
         # Use address_for_offline to generate all data for each CEP
-        for cep in ceps:
+        for i, cep in enumerate(ceps):
             # Ensure CEP has dash format
             formatted_cep = cep
             if '-' not in formatted_cep and len(formatted_cep) == 8:
@@ -182,6 +195,14 @@ async def get_address_data_batch(ceps: list[str], make_api_call: bool = False) -
                 'cep': formatted_cep,
             }
             address_data_list.append(address_data)
+
+            # Update progress occasionally if callback is provided
+            if progress_callback and i % max(1, len(ceps) // 10) == 0:
+                progress_callback(0, f'Generating address data: {i + 1}/{len(ceps)}')
+
+    # Final update for API calls completion
+    if progress_callback and make_api_call:
+        progress_callback(0, 'API calls processing completed')
 
     return address_data_list
 
@@ -385,7 +406,7 @@ def sample(
 
                 # Report progress if callback is provided
                 if progress_callback and i % max(1, actual_qty // 100) == 0:
-                    progress_callback(i + 1)
+                    progress_callback(i + 1, 'Generating documents')
 
         elif any([only_cpf, only_pis, only_cnpj, only_cei, only_rg, only_fone]):
             # Handle document-only generation with proper state handling
@@ -416,7 +437,7 @@ def sample(
 
                 # Report progress if callback is provided
                 if progress_callback and i % max(1, actual_qty // 100) == 0:
-                    progress_callback(i + 1)
+                    progress_callback(i + 1, 'Generating specific documents')
 
         elif return_only_name or only_surname or only_middle:
             # Name-only generation
@@ -470,7 +491,7 @@ def sample(
 
                 # Report progress if callback is provided
                 if progress_callback and i % max(1, actual_qty // 100) == 0:
-                    progress_callback(i + 1)
+                    progress_callback(i + 1, 'Generating names')
         else:
             # Full sample generation with location, name, and documents
             for i in range(actual_qty):
@@ -531,7 +552,7 @@ def sample(
 
                 # Report progress if callback is provided
                 if progress_callback and i % max(1, actual_qty // 100) == 0:
-                    progress_callback(i + 1)
+                    progress_callback(i + 1, 'Generating complete profiles')
 
         # Collect all CEPs that will be used
         all_ceps = []
@@ -539,7 +560,7 @@ def sample(
 
         # Update progress to indicate we're starting address generation
         if progress_callback:
-            progress_callback(actual_qty // 2)  # Show approximately half-way progress
+            progress_callback(actual_qty // 2, 'Preparing address data')  # Show approximately half-way progress
 
         # For all types of generation
         for i in range(actual_qty):
@@ -555,14 +576,18 @@ def sample(
 
         # Update progress to indicate we're making API calls if applicable
         if progress_callback and make_api_call:
-            progress_callback(actual_qty * 3 // 4)  # Show approximately 75% progress
+            progress_callback(actual_qty * 3 // 4, 'API calls starting')  # Show approximately 75% progress
 
         # Get address data for all CEPs at once
-        address_data_list = asyncio.run(get_address_data_batch(all_ceps, make_api_call))
+        address_data_list = asyncio.run(get_address_data_batch(all_ceps, make_api_call, progress_callback))
+
+        # Update progress to indicate API calls are complete
+        if progress_callback and make_api_call:
+            progress_callback(actual_qty * 4 // 5, 'API calls completed')
 
         # Update progress to indicate we're finalizing results
         if progress_callback:
-            progress_callback(actual_qty * 9 // 10)  # Show approximately 90% progress
+            progress_callback(actual_qty * 9 // 10, 'Finalizing results')  # Show approximately 90% progress
 
         # Modify the results to include state_info and address data
         results_with_state_info = []
@@ -600,6 +625,9 @@ def sample(
 
         # Save to JSONL if requested
         if save_to_jsonl:
+            if progress_callback:
+                progress_callback(actual_qty * 95 // 100, 'Saving to JSONL file')
+
             if isinstance(parsed_results, list):
                 asyncio.run(save_to_jsonl_file(parsed_results, save_to_jsonl, append=append_to_jsonl))
             else:
@@ -607,7 +635,7 @@ def sample(
 
         # Final progress update to indicate completion
         if progress_callback:
-            progress_callback(actual_qty)
+            progress_callback(actual_qty, 'Complete')
 
         return parsed_results[0] if actual_qty == 1 else parsed_results
     except Exception as e:
