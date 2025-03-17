@@ -93,7 +93,7 @@ def parse_result(
     return result
 
 
-async def save_to_jsonl_file(data: list[dict], filename: str, append: bool = False) -> None:
+async def save_to_jsonl_file(data: list[dict], filename: str, append: bool = True) -> None:
     """Save generated samples to a JSONL file asynchronously.
 
     Args:
