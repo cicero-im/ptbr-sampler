@@ -32,7 +32,7 @@ Key points:
 
 ## Current System Flow
 
-1. The CLI (`src/cli.py`) processes command-line arguments and calls the `sample` function in `src/sampler.py`.
+1. The CLI (`ptbr_sampler/cli.py`) processes command-line arguments and calls the `sample` function in `ptbr_sampler/sampler.py`.
 2. The `sample` function uses `BrazilianLocationSampler` to get location data (city, state, CEP).
 3. Currently, it doesn't use `cep_wrapper.py` or `address_for_offline.py` for detailed address information.
 
@@ -40,13 +40,13 @@ Key points:
 
 ### 1. Add New CLI Parameter
 
-Add a new parameter `--make_api_call` to the CLI in `src/cli.py`:
+Add a new parameter `--make_api_call` to the CLI in `ptbr_sampler/cli.py`:
 
 ```python
 MAKE_API_CALL = typer.Option(
-    False, 
-    '--make-api-call', 
-    '-mac', 
+    False,
+    '--make-api-call',
+    '-mac',
     help='Make API calls to retrieve real CEP data instead of generating synthetic address data',
     rich_help_panel='Location Options'
 )
@@ -56,39 +56,39 @@ And update the `sample` function signature to include this parameter.
 
 ### 2. Modify the Sampler Module
 
-Update the `sample` function in `src/sampler.py` to:
+Update the `sample` function in `ptbr_sampler/sampler.py` to:
 - Accept the new `make_api_call` parameter
 - Implement logic to handle both API and offline modes
 - Pass the parameter to the appropriate functions
 
 ### 3. Implement Address Data Retrieval Logic
 
-Create a new function in `src/sampler.py` to handle address data retrieval for multiple CEPs:
+Create a new function in `ptbr_sampler/sampler.py` to handle address data retrieval for multiple CEPs:
 
 ```python
 async def get_address_data_batch(ceps: list[str], make_api_call: bool = False) -> list[dict]:
     """
     Get address data for multiple CEPs, either from API or generated.
-    
+
     Args:
         ceps: List of CEPs to get address data for
         make_api_call: Whether to make API calls or generate data
-        
+
     Returns:
         List of dictionaries with address data (street, neighborhood, building_number)
     """
     address_data_list = []
-    
+
     if make_api_call:
         # Use cep_wrapper to get real data for multiple CEPs
-        from src.utils.cep_wrapper import workers_for_multiple_cep
-        
+        from ptbr_sampler.utils.cep_wrapper import workers_for_multiple_cep
+
         # Format CEPs to remove dashes before API call
         formatted_ceps = [cep.replace('-', '') for cep in ceps]
-        
+
         # Get data from API
         cep_data_list = await workers_for_multiple_cep(formatted_ceps)
-        
+
         # Process each CEP result
         for cep_data in cep_data_list:
             address_data = {
@@ -99,40 +99,40 @@ async def get_address_data_batch(ceps: list[str], make_api_call: bool = False) -
                 'state': cep_data.get('state', ''),
                 'city': cep_data.get('city', '')
             }
-            
+
             # Extract data from API response if no error
             if 'error' not in cep_data:
                 address_data['street'] = cep_data.get('street', '')
                 address_data['neighborhood'] = cep_data.get('neighborhood', '')
-                
+
             # If neighborhood is empty, use address_for_offline
             if not address_data['neighborhood']:
-                from src.utils.address_for_offline import AddressProvider_for_offline
+                from ptbr_sampler.utils.address_for_offline import AddressProvider_for_offline
                 address_provider = AddressProvider_for_offline()
                 address_data['neighborhood'] = address_provider.bairro()
-            
+
             # If street is empty, use address_for_offline
             if not address_data['street']:
-                from src.utils.address_for_offline import AddressProvider_for_offline
+                from ptbr_sampler.utils.address_for_offline import AddressProvider_for_offline
                 address_provider = AddressProvider_for_offline()
                 address_data['street'] = address_provider.street_prefix() + ' ' + address_provider.last_name()
-            
+
             # Always get building number from address_for_offline
-            from src.utils.address_for_offline import AddressProvider_for_offline
+            from ptbr_sampler.utils.address_for_offline import AddressProvider_for_offline
             address_provider = AddressProvider_for_offline()
             address_data['building_number'] = address_provider.building_number()
-            
+
             address_data_list.append(address_data)
     else:
         # Use address_for_offline to generate all data for each CEP
-        from src.utils.address_for_offline import AddressProvider_for_offline
-        
+        from ptbr_sampler.utils.address_for_offline import AddressProvider_for_offline
+
         for cep in ceps:
             # Ensure CEP has dash format
             formatted_cep = cep
             if '-' not in formatted_cep and len(formatted_cep) == 8:
                 formatted_cep = f"{formatted_cep[:5]}-{formatted_cep[5:]}"
-                
+
             address_provider = AddressProvider_for_offline()
             address_data = {
                 'street': address_provider.street_prefix() + ' ' + address_provider.last_name(),
@@ -141,7 +141,7 @@ async def get_address_data_batch(ceps: list[str], make_api_call: bool = False) -
                 'cep': formatted_cep
             }
             address_data_list.append(address_data)
-    
+
     return address_data_list
 ```
 
@@ -151,11 +151,11 @@ Also create a single-CEP version for convenience:
 async def get_address_data(cep: str, make_api_call: bool = False) -> dict:
     """
     Get address data for a single CEP, either from API or generated.
-    
+
     Args:
         cep: The CEP to get address data for
         make_api_call: Whether to make API calls or generate data
-        
+
     Returns:
         Dictionary with address data (street, neighborhood, building_number)
     """
@@ -165,31 +165,31 @@ async def get_address_data(cep: str, make_api_call: bool = False) -> dict:
 
 ### 4. Integrate Address Data into Results
 
-Modify the `parse_result` function in `src/sampler.py` to include the new address fields:
+Modify the `parse_result` function in `ptbr_sampler/sampler.py` to include the new address fields:
 
 ```python
 def parse_result(
-    location: str, 
-    name_components: NameComponents, 
-    documents: dict[str, str], 
+    location: str,
+    name_components: NameComponents,
+    documents: dict[str, str],
     state_info: tuple[str, str, str] | None = None,
     address_data: dict | None = None
 ) -> dict:
     # Existing code...
-    
+
     result = {
         # Existing fields...
         'street': '',
         'neighborhood': '',
         'building_number': '',
     }
-    
+
     # Add address data if available
     if address_data:
         result['street'] = address_data.get('street', '')
         result['neighborhood'] = address_data.get('neighborhood', '')
         result['building_number'] = address_data.get('building_number', '')
-        
+
         # If we have city/state from address_data, use it (API mode)
         if address_data.get('city'):
             result['city'] = address_data.get('city', '')
@@ -197,9 +197,9 @@ def parse_result(
             result['state'] = address_data.get('state', '')
         if address_data.get('cep'):
             result['cep'] = address_data.get('cep', '')
-    
+
     # Existing code...
-    
+
     return result
 ```
 
@@ -217,7 +217,7 @@ all_ceps = []
 for i in range(actual_qty):
     # Get state and city
     state_name, state_abbr, city_name = location_sampler.get_state_and_city()
-    
+
     # Get a random CEP for the city
     cep = location_sampler._get_random_cep_for_city(city_name)
     formatted_cep = location_sampler._format_cep(cep, True)  # Always include dash

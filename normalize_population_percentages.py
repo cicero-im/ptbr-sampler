@@ -4,9 +4,9 @@ import random
 
 
 def normalize_population_data(
-    input_file='src/data/locations_data.json',
-    ceps_file='src/data/cities_with_ceps.json',
-    output_file='src/data/locations_data_normalized.json',
+    input_file='ptbr_sampler/data/locations_data.json',
+    ceps_file='ptbr_sampler/data/cities_with_ceps.json',
+    output_file='ptbr_sampler/data/locations_data_normalized.json',
 ):
     """
     Recalculate population percentages in locations_data.json

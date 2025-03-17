@@ -2,7 +2,7 @@
 
 ## Issues Identified
 
-1. **CEP Selection Process Clarification**: 
+1. **CEP Selection Process Clarification**:
    - The correct process should be a two-step random selection:
      1. First, select a city using weighted random selection based on population (already implemented)
      2. Then, select a CEP randomly from the city's "ceps" array (already implemented with `random.choice()`)
@@ -76,16 +76,16 @@ location_sampler = BrazilianLocationSampler(json_path)
 def sample(...):
     # Handle q parameter alias (takes precedence over qty)
     actual_qty = q if q is not None else qty
-    
+
     # If all_data is True, override other flags to include everything
     if all_data:
         # (existing code)
-    
+
     try:
         # Initialize samplers only once
         location_sampler = BrazilianLocationSampler(json_path)
         doc_sampler = DocumentSampler()
-        
+
         # Load location data if provided - do this only once
         if locations_path:
             try:
@@ -99,27 +99,27 @@ def sample(...):
             except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
                 # Log but continue with default data
                 print(f'Warning: Could not use locations_path data: {e}')
-        
+
         # Load name data only once
         with Path(surnames_path).open(encoding='utf-8') as f:
             surnames_data = json.load(f)
-        
+
         # Create complete data for name sampler
         name_data = {'surnames': surnames_data['surnames']}
         if names_path:
             with Path(names_path).open(encoding='utf-8') as f:
                 names_data = json.load(f)
                 name_data.update(names_data)
-        
+
         name_sampler = BrazilianNameSampler(
             name_data,  # Pass the combined data
             middle_names_path,
             None,  # No need for names_path as we've already loaded it
         )
-        
+
         # Initialize results list
         results: list[tuple[str, NameComponents, dict[str, str]]] = []
-        
+
         # Now proceed with the conditional blocks, but without reinitializing the samplers
         if only_document:
             # (existing code, but remove sampler initialization)
@@ -129,10 +129,10 @@ def sample(...):
             # (existing code, but remove sampler initialization)
         else:
             # (existing code, but remove sampler initialization)
-        
+
         # Rest of the function remains the same
         # ...
-    
+
     except Exception as e:
         # Re-raise the exception with more context
         raise RuntimeError(f'Error generating samples: {e}') from e
@@ -144,5 +144,5 @@ This change ensures that the samplers are initialized only once and that each sa
 
 1. Confirm that the CEP selection process is already correctly implemented
 2. Fix the duplicate initialization of the location sampler in `sampler.py`
-3. Test the changes with the command: `uv run src/cli.py -q 10 --all --save-to-jsonl teste.jsonl`
+3. Test the changes with the command: `uv run ptbr_sampler/cli.py -q 10 --all --save-to-jsonl teste.jsonl`
 4. Verify that each sample has a different CEP and that each turn generates a new sample

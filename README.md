@@ -42,22 +42,22 @@ uv sync
 
 ```bash
 # Gere um perfil completo (nome, localização, documentos)
-uv run src.cli sample --qty 1
+uv run ptbr_sampler.cli sample --qty 1
 
 # Gere apenas documentos específicos
-uv run src.cli sample --only-cpf --only-rg --qty 3
+uv run ptbr_sampler.cli sample --only-cpf --only-rg --qty 3
 ```
 
 ### API Python
 
 ```python
-from src.br_location_class import BrazilianLocationSampler
-from src.br_name_class import BrazilianNameSampler, TimePeriod
-from src.document_sampler import DocumentSampler
+from ptbr_sampler.br_location_class import BrazilianLocationSampler
+from ptbr_sampler.br_name_class import BrazilianNameSampler, TimePeriod
+from ptbr_sampler.document_sampler import DocumentSampler
 
 # Inicialize os amostradores
 location_sampler = BrazilianLocationSampler("data/cities_with_ceps.json")
-name_sampler = BrazilianNameSampler("data/names_data.json", 
+name_sampler = BrazilianNameSampler("data/names_data.json",
                                    middle_names_path="data/middle_names.json")
 doc_sampler = DocumentSampler()
 
