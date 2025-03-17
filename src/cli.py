@@ -21,7 +21,9 @@ ALL_DATA = typer.Option(False, '--all', '-a', help='Include all possible data in
 SAVE_TO_JSONL = typer.Option(None, '--save-to-jsonl', '-sj', help='Save generated samples to a JSONL file', rich_help_panel='Basic Options')
 APPEND_TO_JSONL = typer.Option(True, '--append', '-ap', help='Append to JSONL file instead of overwriting', rich_help_panel='Basic Options')
 # New convenience options
-BATCH = typer.Option(None, '--batch', '-b', help='Batch mode with custom quantity (default: 50)', rich_help_panel='Basic Options')
+BATCH = typer.Option(
+    None, '--batch', '-b', help='Process in batches of this size (saves after each batch)', rich_help_panel='Basic Options'
+)
 EASY = typer.Option(
     None, '--easy', '-e', help='Easy mode with integer qty (enables API calls, all data, and auto-saves)', rich_help_panel='Basic Options'
 )
