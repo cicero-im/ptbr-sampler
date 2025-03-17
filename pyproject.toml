@@ -31,6 +31,8 @@ dependencies = [
     "richer>=0.1.6",
     "aiofiles>=24.1.0",
     "loguru>=0.7.3",
+    "uvloop>=0.21.0",
+    "pydantic>=2.10.6",
 ]
 
 [project.optional-dependencies]

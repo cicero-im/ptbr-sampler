@@ -8,9 +8,11 @@ import asyncio
 import json
 from pathlib import Path
 import random
+from typing import List, Optional
 
 import aiofiles
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from ptbr_sampler.utils.phone import generate_phone_number
 
@@ -19,117 +21,41 @@ from .br_name_class import BrazilianNameSampler, NameComponents, TimePeriod
 from .document_sampler import DocumentSampler
 
 
-# Enhanced parse_result function with DDD consistency improvements
-def parse_result(
-    location: str,
-    name_components: NameComponents,
-    documents: dict[str, str],
-    state_info: tuple[str, str, str] | None = None,
-    address_data: dict | None = None,
-) -> dict:
-    """Parse sample results into a standardized dictionary format.
-
-    Args:
-        location: Full location string
-        name_components: Named tuple with name components
-        documents: Dictionary of document numbers
-        state_info: Optional tuple of (state_name, state_abbr, city_name)
-        address_data: Optional dictionary with address data (street, neighborhood, building_number)
-
-    Returns:
-        dict: Structured dictionary with parsed components
-    """
-    # Debug the documents dictionary to see if phone is present
-    has_phone = 'phone' in documents
-    phone_value = documents.get('phone', '')
-    logger.debug(f"parse_result: documents contains phone? {has_phone}, value: {phone_value}")
+# Define Pydantic models for streamlined processing
+class LocationItem(BaseModel):
+    """Model representing location data for a single person"""
+    cep: str = ""
+    city_name: str = ""
+    city_uf: str = ""  # State abbreviation (UF)
+    state: str = ""    # Full state name
+    phone: str = ""
+    street: str = ""
+    building_number: str = ""
+    neighborhood: str = ""
     
-    # Check if we have phone metadata
-    has_phone_metadata = '_phone_metadata' in documents
-    if has_phone and has_phone_metadata:
-        phone_meta = documents.get('_phone_metadata', {})
-        logger.debug(f"Phone was generated for city: {phone_meta.get('original_city', 'unknown')} with DDD: {phone_meta.get('ddd', 'unknown')}")
+    # Person data
+    name: str = ""
+    middle_name: Optional[str] = None
+    surnames: str = ""
     
-    result = {
-        'name': name_components.first_name if name_components else '',
-        'middle_name': name_components.middle_name if name_components else '',
-        'surnames': name_components.surname if name_components else '',
-        'city': '',
-        'state': '',
-        'state_abbr': '',
-        'cep': '',
-        'street': '',
-        'neighborhood': '',
-        'building_number': '',
-        'cpf': documents.get('cpf', ''),
-        'rg': documents.get('rg', ''),
-        'pis': documents.get('pis', ''),
-        'cnpj': documents.get('cnpj', ''),
-        'cei': documents.get('cei', ''),
-        'phone': documents.get('phone', ''),  # Ensure phone is included
-    }
-
-    # Important: If we have phone_metadata, use that city for consistency with the phone DDD
-    if has_phone and has_phone_metadata and documents.get('_phone_metadata', {}).get('original_city'):
-        # Prioritize phone metadata if available and we need to set the city
-        if state_info:
-            # Keep the original state information but use the city from phone metadata
-            # to ensure the phone DDD matches the city
-            state_name, _, _ = state_info
-            city_name = documents.get('_phone_metadata', {}).get('original_city')
-            state_abbr = documents.get('_phone_metadata', {}).get('state_abbr', '')
-            result['state'], result['state_abbr'], result['city'] = state_name, state_abbr, city_name
-            logger.debug(f"Using city from phone metadata: {city_name} (to match DDD)")
-        else:
-            # If no state_info, still try to use the city from phone metadata
-            result['city'] = documents.get('_phone_metadata', {}).get('original_city')
-            result['state_abbr'] = documents.get('_phone_metadata', {}).get('state_abbr', '')
-            logger.debug(f"Using city from phone metadata without state info: {result['city']}")
-    elif state_info:
-        # Second priority: use state_info if no phone metadata
-        result['state'], result['state_abbr'], result['city'] = state_info
-        logger.debug(f"Using city from state_info: {result['city']}")
-    elif location and ', ' in location:
-        # Last priority: parse location string if available
-        try:
-            city_part, state_part = location.split(', ')
-            if ' - ' in city_part:
-                result['city'], cep = city_part.split(' - ')
-                result['cep'] = cep
-            else:
-                result['city'] = city_part
-
-            if '(' in state_part:
-                result['state'], abbr = state_part.split(' (')
-                result['state_abbr'] = abbr.rstrip(')')
-            else:
-                result['state'] = state_part
-                
-            logger.debug(f"Using city from location string: {result['city']}")
-        except ValueError:
-            pass
-
-    # Add address data if available, but NEVER override city/state that was used for DDD
-    if address_data:
-        result['street'] = address_data.get('street', '')
-        result['neighborhood'] = address_data.get('neighborhood', '')
-        result['building_number'] = address_data.get('building_number', '')
-        
-        # Only set CEP from address_data if it's not already set
-        if not result['cep'] and address_data.get('cep'):
-            result['cep'] = address_data.get('cep', '')
-            
-    # Log the final result structure
-    logger.debug(f"parse_result: final result city: {result['city']}, phone: {result.get('phone', '')}")
-    
-    return result
+    # Documents
+    cpf: str = ""
+    rg: str = ""
+    pis: str = ""
+    cnpj: str = ""
+    cei: str = ""
 
 
-async def save_to_jsonl_file(data: list[dict], filename: str, append: bool = True) -> None:
+class LocationBatch(BaseModel):
+    """Model representing a batch of location items"""
+    items: List[LocationItem] = Field(default_factory=list)
+
+
+async def save_to_jsonl_file(data: List[LocationItem], filename: str, append: bool = True) -> None:
     """Save generated samples to a JSONL file asynchronously.
 
     Args:
-        data: List of dictionaries containing sample data
+        data: List of LocationItem objects containing sample data
         filename: Path to the output JSONL file
         append: If True, append to existing file instead of overwriting
     """
@@ -141,24 +67,32 @@ async def save_to_jsonl_file(data: list[dict], filename: str, append: bool = Tru
 
     async with aiofiles.open(file_path, mode, encoding='utf-8') as f:
         for item in data:
-            await f.write(json.dumps(item, ensure_ascii=False) + '\n')
+            await f.write(json.dumps(item.dict(), ensure_ascii=False) + '\n')
 
 
-async def get_address_data_batch(ceps: list[str], make_api_call: bool = False, progress_callback: callable = None) -> list[dict]:
+async def get_address_data_batch(location_items: List[LocationItem], make_api_call: bool = False, progress_callback: callable = None, num_workers: int = 100) -> List[LocationItem]:
     """
-    Get address data for multiple CEPs, either from API or generated.
+    Get address data for multiple CEPs and update the LocationItems.
 
     Args:
-        ceps: List of CEPs to get address data for
+        location_items: List of LocationItem objects to be updated
         make_api_call: Whether to make API calls or generate data
         progress_callback: Optional callback function to report progress
+        num_workers: Number of workers to use for API calls (default: 100)
 
     Returns:
-        List of dictionaries with address data (street, neighborhood, building_number)
+        Updated list of LocationItem objects with address data
     """
-    address_data_list = []
-
+    if not location_items:
+        return []
+    
+    # Extract CEPs from location items
+    ceps = [item.cep for item in location_items]
+    
     logger.debug(f'Getting address data for {len(ceps)} CEPs (API mode: {make_api_call})')
+    
+    # Create a copy of the location items to avoid modifying the original
+    updated_items = [item.copy(deep=True) for item in location_items]
 
     if make_api_call:
         # Use cep_wrapper to get real data for multiple CEPs
@@ -166,173 +100,113 @@ async def get_address_data_batch(ceps: list[str], make_api_call: bool = False, p
 
         # Format CEPs to remove dashes before API call
         formatted_ceps = [cep.replace('-', '') for cep in ceps]
-        logger.info(f'Making API calls for {len(formatted_ceps)} CEPs')
+        logger.info(f'Making API calls for {len(formatted_ceps)} CEPs with {num_workers} workers')
 
         # Update progress if callback is provided
         if progress_callback:
-            progress_callback(0, 'API calls: Connecting to service')
+            await progress_callback(0, 'API calls: Connecting to service')
 
         try:
-            # Get data from API
-            cep_data_list = await workers_for_multiple_cep(formatted_ceps)
+            # Get data from API - explicitly set workers to 100
+            cep_data_list = await workers_for_multiple_cep(formatted_ceps, max_workers=num_workers)
             logger.info(f'Received API responses for {len(cep_data_list)} CEPs')
 
             # Update progress if callback is provided
             if progress_callback:
-                progress_callback(0, 'API calls: Processing responses')
+                await progress_callback(0, 'API calls: Processing responses')
 
             # Process each CEP result
-            error_count = 0
             for i, cep_data in enumerate(cep_data_list):
-                address_data = {
-                    'street': '',
-                    'neighborhood': '',
-                    'building_number': '',
-                    'cep': ceps[i] if i < len(ceps) else '',  # Use original CEP
-                    'state': '',
-                    'city': '',
-                }
-
-                # Extract data from API response if no error
-                # Check if it's a dictionary (which can use .get) or a list (which would need indexing)
-                if isinstance(cep_data, dict):
-                    # Handle dictionary response
-                    if 'error' not in cep_data:
-                        address_data['street'] = cep_data.get('street', '')
-                        address_data['neighborhood'] = cep_data.get('neighborhood', '')
-                        address_data['cep'] = cep_data.get('cep', ceps[i] if i < len(ceps) else '')
-                        address_data['state'] = cep_data.get('state', '')
-                        address_data['city'] = cep_data.get('city', '')
-                        
-                        # Generate a random building number since API doesn't provide this
-                        address_data['building_number'] = str(random.randint(1, 999))
-                    else:
-                        error_count += 1
-                        logger.warning(f'API error for CEP {formatted_ceps[i]}: {cep_data.get("error", "Unknown error")}')
-                        # Leave address_data empty, will be filled with placeholder values later
-                elif isinstance(cep_data, list) and len(cep_data) > 0:
-                    # Handle list response - take the first item
-                    first_item = cep_data[0]
-                    if isinstance(first_item, dict):
-                        address_data['street'] = first_item.get('street', '')
-                        address_data['neighborhood'] = first_item.get('neighborhood', '')
-                        address_data['cep'] = first_item.get('cep', ceps[i] if i < len(ceps) else '')
-                        address_data['state'] = first_item.get('state', '')
-                        address_data['city'] = first_item.get('city', '')
-                        
-                        # Generate a random building number
-                        address_data['building_number'] = str(random.randint(1, 999))
-                    else:
-                        error_count += 1
-                        logger.warning(f'Invalid API response format for CEP {formatted_ceps[i]}')
-                else:
-                    error_count += 1
-                    logger.warning(f'Invalid or empty API response for CEP {formatted_ceps[i]}')
-
-                # Ensure we have a building number regardless of API response
-                if not address_data['building_number']:
-                    address_data['building_number'] = str(random.randint(1, 999))
+                if i >= len(updated_items):
+                    break
                 
-                address_data_list.append(address_data)
-
-            if error_count > 0:
-                logger.warning(f'{error_count} out of {len(formatted_ceps)} API calls had errors')
+                # Skip if we can't process this data properly
+                if not cep_data or (isinstance(cep_data, dict) and 'error' in cep_data):
+                    continue
+                
+                # Handle dictionary and list responses
+                data_to_use = None
+                if isinstance(cep_data, dict) and 'error' not in cep_data:
+                    data_to_use = cep_data
+                elif isinstance(cep_data, list) and cep_data and isinstance(cep_data[0], dict):
+                    data_to_use = cep_data[0]
+                
+                # Update the location item with the API data if available
+                if data_to_use:
+                    # Only update fields that are empty or missing in the original item
+                    if not updated_items[i].street:
+                        updated_items[i].street = data_to_use.get('street', '')
+                    if not updated_items[i].neighborhood:
+                        updated_items[i].neighborhood = data_to_use.get('neighborhood', '')
+                    if not updated_items[i].building_number:
+                        updated_items[i].building_number = str(random.randint(1, 999))
+                    
+                    # Don't override existing state/city values with API data
+                    # This preserves names like "São Paulo" instead of abbreviations
         except Exception as e:
             logger.error(f'Error during API calls: {e}')
-            # If we're making API calls but there was an error, return empty address data
-            for i, cep in enumerate(ceps):
-                formatted_cep = cep
-                if '-' not in formatted_cep and len(formatted_cep) == 8:
-                    formatted_cep = f'{formatted_cep[:5]}-{formatted_cep[5:]}'
-                
-                # Add minimal address data with just the CEP
-                address_data_list.append({
-                    'street': '',
-                    'neighborhood': '',
-                    'building_number': str(random.randint(1, 999)),
-                    'cep': formatted_cep,
-                    'state': '',
-                    'city': '',
-                })
+            
     else:
         # Generate fake data for each CEP
         logger.info(f'Generating synthetic address data for {len(ceps)} CEPs (offline mode)')
-        for i, cep in enumerate(ceps):
-            # Ensure CEP has dash format
-            formatted_cep = cep
-            if '-' not in formatted_cep and len(formatted_cep) == 8:
-                formatted_cep = f'{formatted_cep[:5]}-{formatted_cep[5:]}'
-
-            # Generate random address data
-            street_names = ['Rua', 'Avenida', 'Alameda', 'Travessa', 'Rodovia']
-            neighborhood_names = ['Centro', 'Jardim', 'Vila', 'Bairro', 'Parque']
+        
+        for i, item in enumerate(updated_items):
+            # Generate random address data if needed
+            if not item.street:
+                street_names = ['Rua', 'Avenida', 'Alameda', 'Travessa', 'Rodovia']
+                item.street = f"{random.choice(street_names)} {random.randint(1, 100)}"
             
-            address_data = {
-                'street': f"{random.choice(street_names)} {random.randint(1, 100)}",
-                'neighborhood': f"{random.choice(neighborhood_names)} {random.randint(1, 50)}",
-                'building_number': str(random.randint(1, 999)),
-                'cep': formatted_cep,
-                'state': '',
-                'city': '',
-            }
-            address_data_list.append(address_data)
+            if not item.neighborhood:
+                neighborhood_names = ['Centro', 'Jardim', 'Vila', 'Bairro', 'Parque']
+                item.neighborhood = f"{random.choice(neighborhood_names)} {random.randint(1, 50)}"
+            
+            if not item.building_number:
+                item.building_number = str(random.randint(1, 999))
 
             # Update progress occasionally if callback is provided
             if progress_callback and i % max(1, len(ceps) // 10) == 0:
-                logger.debug(f'Generated address data for {i + 1}/{len(ceps)} CEPs')
-                progress_callback(0, f'Generating address data: {i + 1}/{len(ceps)}')
+                await progress_callback(0, f'Generating address data: {i + 1}/{len(ceps)}')
+
+    # Ensure all items have a building number
+    for item in updated_items:
+        if not item.building_number:
+            item.building_number = str(random.randint(1, 999))
 
     # Final update for API calls completion
     if progress_callback and make_api_call:
-        progress_callback(0, 'API calls processing completed')
+        await progress_callback(0, 'API calls processing completed')
 
-    return address_data_list
-
-
-async def get_address_data(cep: str, make_api_call: bool = False) -> dict:
-    """
-    Get address data for a single CEP, either from API or generated.
-
-    Args:
-        cep: The CEP to get address data for
-        make_api_call: Whether to make API calls or generate data
-
-    Returns:
-        Dictionary with address data (street, neighborhood, building_number)
-    """
-    result = await get_address_data_batch([cep], make_api_call)
-    return result[0] if result else {}
+    return updated_items
 
 
 async def process_and_save_in_batches(
-    all_ceps: list[str],
-    all_state_city_info: list[tuple[str, str, str]],
-    results_with_state_info: list[tuple[str, NameComponents, dict[str, str]]],
+    location_items: List[LocationItem],
     make_api_call: bool,
     save_to_jsonl: str | None,
     append_to_jsonl: bool,
-    progress_callback: callable | None = None,
-    batch_size: int = 100
-) -> list[dict]:
-    """Process CEPs in batches, make API calls for each batch, and save results incrementally.
+    progress_callback: callable = None,
+    batch_size: int = 100,
+    num_workers: int = 100
+) -> List[LocationItem]:
+    """Process location items in batches, make API calls for each batch, and save results incrementally.
     
     Args:
-        all_ceps: List of CEPs to process
-        all_state_city_info: List of (state_name, state_abbr, city_name) tuples
-        results_with_state_info: List of (location, name_components, documents) tuples
+        location_items: List of LocationItem objects to process
         make_api_call: Whether to make API calls or generate data
         save_to_jsonl: Path to save results as JSONL (if None, no saving is done)
         append_to_jsonl: Whether to append to existing JSONL file
         progress_callback: Optional callback function for progress updates
-        batch_size: Number of CEPs to process in each batch
+        batch_size: Number of items to process in each batch (default: 100)
+        num_workers: Number of workers to use for API calls (default: 100)
         
     Returns:
-        List of dictionaries with all parsed results
+        List of processed LocationItem objects
     """
-    total_items = len(all_ceps)
-    all_parsed_results = []
+    total_items = len(location_items)
+    all_processed_items = []
     
-    # Calculate number of batches
+    # Calculate number of batches - always use batch_size=100
+    batch_size = 100  # Ensure batch size is always 100
     num_batches = (total_items + batch_size - 1) // batch_size  # ceiling division
     
     logger.info(f"Processing {total_items} items in {num_batches} batches of {batch_size}")
@@ -345,43 +219,21 @@ async def process_and_save_in_batches(
         logger.info(f"Processing batch {batch_idx + 1}/{num_batches} with {current_batch_size} items")
         
         if progress_callback:
-            progress_callback(start_idx, f"Processing batch {batch_idx + 1}/{num_batches}")
+            await progress_callback(start_idx, f"Processing batch {batch_idx + 1}/{num_batches}")
         
-        # Get the batch of CEPs and state-city info
-        batch_ceps = all_ceps[start_idx:end_idx]
-        batch_state_city_info = all_state_city_info[start_idx:end_idx]
-        batch_results_info = results_with_state_info[start_idx:end_idx]
+        # Get the batch of location items
+        batch_items = location_items[start_idx:end_idx]
         
-        # Process address data for the batch
-        if make_api_call:
-            if progress_callback:
-                progress_callback(start_idx, f"API calls for batch {batch_idx + 1}")
-                
-            logger.info(f"Making API calls for batch {batch_idx + 1} with {len(batch_ceps)} CEPs")
-            batch_address_data = await get_address_data_batch(batch_ceps, make_api_call, progress_callback)
-        else:
-            logger.info(f"Generating synthetic address data for batch {batch_idx + 1}")
-            batch_address_data = await get_address_data_batch(batch_ceps, False, progress_callback)
+        # Process address data for the batch - pass num_workers=100
+        processed_items = await get_address_data_batch(
+            batch_items, 
+            make_api_call, 
+            progress_callback,
+            num_workers=num_workers
+        )
         
-        # Process results for this batch
-        batch_parsed_results = []
-        for i, (location, name_components, documents) in enumerate(batch_results_info):
-            # Get the corresponding address data
-            address_data = batch_address_data[i] if i < len(batch_address_data) else {}
-            
-            # Get the state info for this item
-            state_info = batch_state_city_info[i] if i < len(batch_state_city_info) else None
-            
-            # Parse the result
-            result_dict = parse_result(
-                location,
-                name_components,
-                documents,
-                state_info=state_info,
-                address_data=address_data,
-            )
-            batch_parsed_results.append(result_dict)
-            all_parsed_results.append(result_dict)
+        # Add to the full list of processed items
+        all_processed_items.extend(processed_items)
         
         # Save this batch if requested
         if save_to_jsonl:
@@ -394,66 +246,64 @@ async def process_and_save_in_batches(
                     file_path = Path(save_to_jsonl)
                     current_append = file_path.exists()
                 
-                logger.info(f"Saving batch {batch_idx + 1} with {len(batch_parsed_results)} results to {save_to_jsonl} (append={current_append})")
+                logger.info(f"Saving batch {batch_idx + 1} with {len(processed_items)} results to {save_to_jsonl} (append={current_append})")
                 
                 # Save just this batch
-                await save_to_jsonl_file(batch_parsed_results, save_to_jsonl, append=current_append)
+                await save_to_jsonl_file(processed_items, save_to_jsonl, append=current_append)
                 
                 if progress_callback:
-                    progress_callback(end_idx, f"Saved batch {batch_idx + 1}/{num_batches}")
+                    await progress_callback(end_idx, f"Saved batch {batch_idx + 1}/{num_batches}")
             except Exception as e:
                 logger.error(f"Error saving batch {batch_idx + 1} to JSONL: {e}")
                 print(f"Error saving batch {batch_idx + 1} to JSONL: {e}")
     
-    return all_parsed_results
+    return all_processed_items
 
 
-def sample(
-    qty: int,
-    q: int | None,
-    city_only: bool,
-    state_abbr_only: bool,
-    state_full_only: bool,
-    only_cep: bool,
-    cep_without_dash: bool,
-    make_api_call: bool,
-    time_period: TimePeriod,
-    return_only_name: bool,
-    name_raw: bool,
-    json_path: str | Path,
-    names_path: str | Path,
-    middle_names_path: str | Path,
-    only_surname: bool,
-    top_40: bool,
-    with_only_one_surname: bool,
-    always_middle: bool,
-    only_middle: bool,
-    always_cpf: bool,
-    always_pis: bool,
-    always_cnpj: bool,
-    always_cei: bool,
-    always_rg: bool,
-    always_phone: bool,
-    only_cpf: bool,
-    only_pis: bool,
-    only_cnpj: bool,
-    only_cei: bool,
-    only_rg: bool,
-    only_fone: bool,
-    include_issuer: bool,
-    only_document: bool,
-    surnames_path: str | Path,
-    locations_path: str | Path,
-    save_to_jsonl: str | None,
-    all_data: bool,
+async def sample(
+    qty: int = 1,
+    q: int | None = None,
+    city_only: bool = False,
+    state_abbr_only: bool = False,
+    state_full_only: bool = False,
+    only_cep: bool = False,
+    cep_without_dash: bool = False,
+    make_api_call: bool = False,
+    time_period: TimePeriod = TimePeriod.UNTIL_2010,
+    return_only_name: bool = False,
+    name_raw: bool = False,
+    json_path: str | Path = Path(__file__).parent / 'data' / 'location_data.json',
+    names_path: str | Path = Path(__file__).parent / 'data' / 'names_data.json',
+    middle_names_path: str | Path = Path(__file__).parent / 'data' / 'middle_names.json',
+    only_surname: bool = False,
+    top_40: bool = False,
+    with_only_one_surname: bool = False,
+    always_middle: bool = False,
+    only_middle: bool = False,
+    always_cpf: bool = False,
+    always_pis: bool = False,
+    always_cnpj: bool = False,
+    always_cei: bool = False,
+    always_rg: bool = False,
+    always_phone: bool = False,
+    only_cpf: bool = False,
+    only_pis: bool = False,
+    only_cnpj: bool = False,
+    only_cei: bool = False,
+    only_rg: bool = False,
+    only_fone: bool = False,
+    include_issuer: bool = False,
+    only_document: bool = False,
+    surnames_path: str | Path = Path(__file__).parent / 'data' / 'surnames_data.json',
+    locations_path: str | Path = '',
+    save_to_jsonl: str | None = None,
+    all_data: bool = False,
     progress_callback: callable = None,
     append_to_jsonl: bool = True,
-) -> dict | list[dict]:
+    batch_size: int = 100,
+    num_workers: int = 100,
+) -> List[LocationItem] | LocationItem:
     """Generate random Brazilian samples with comprehensive information.
-
-    This function generates random Brazilian location, name, and document samples
-    based on the provided parameters. It handles various combinations of output
-    formats and ensures proper state handling for document generation.
 
     Args:
         qty: Number of samples to generate
@@ -495,16 +345,18 @@ def sample(
         all_data: Include all available data
         progress_callback: Callback function for progress updates
         append_to_jsonl: Append to existing JSONL file instead of overwriting
+        batch_size: Number of items to process in each batch (default: 100)
+        num_workers: Number of workers to use for API calls (default: 100)
 
     Returns:
-        Dictionary or list of dictionaries with generated sample data
+        List of LocationItem objects or single LocationItem if qty=1
     """
     logger.info(f'Starting sample generation. qty={qty}, api={make_api_call}, all_data={all_data}, save_to_jsonl={save_to_jsonl}')
-
+    
     try:
         # Use q as alias for qty if provided
         actual_qty = q if q is not None else qty
-
+        
         # If all_data is True, override other flags to include everything
         if all_data:
             logger.debug('all_data=True: Overriding flags to include comprehensive data')
@@ -529,13 +381,13 @@ def sample(
             state_full_only = False
             return_only_name = False
             only_document = False
-
+        
         # Initialize samplers
         logger.debug('Initializing samplers')
         doc_sampler = DocumentSampler()
         location_sampler = BrazilianLocationSampler(json_path)
-
-        # Load location data if provided - do this only once
+        
+        # Load location data if provided
         if locations_path:
             try:
                 with Path(locations_path).open(encoding='utf-8') as f:
@@ -546,123 +398,41 @@ def sample(
                     if 'states' in locations_data:
                         location_sampler.update_states(locations_data['states'])
             except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
-                # Log but continue with default data
-                print(f'Warning: Could not use locations_path data: {e}')
-
-        # Load surnames data for name sampler
+                logger.warning(f'Could not use locations_path data: {e}')
+        
+        # Load names data
         with Path(surnames_path).open(encoding='utf-8') as f:
             surnames_data = json.load(f)
-
-        # Create complete data for name sampler
+        
         name_data = {'surnames': surnames_data['surnames']}
         if names_path:
             with Path(names_path).open(encoding='utf-8') as f:
                 names_data = json.load(f)
                 name_data.update(names_data)
-
+        
         name_sampler = BrazilianNameSampler(
-            name_data,  # Pass the combined data
+            name_data,
             middle_names_path,
             None,  # No need for names_path as we've already loaded it
         )
-
-        # Initialize results list
-        results: list[tuple[str, NameComponents, dict[str, str]]] = []
         
-        # Initialize parsed_results list to avoid the "variable not associated with a value" error
-        parsed_results: list[dict] = []
-
-        if only_document:
-            # Document-only generation with proper state handling
-            for i in range(actual_qty):
-                documents = {}
-
-                # Generate location first to get proper state for RG
-                state_name, state_abbr, city_name = location_sampler.get_state_and_city()
-
-                # Generate all requested documents
-                if always_cpf or only_cpf:
-                    documents['cpf'] = doc_sampler.generate_cpf()
-                if always_pis or only_pis:
-                    documents['pis'] = doc_sampler.generate_pis()
-                if always_cnpj or only_cnpj:
-                    documents['cnpj'] = doc_sampler.generate_cnpj()
-                if always_cei or only_cei:
-                    documents['cei'] = doc_sampler.generate_cei()
-                if always_rg or only_rg:
-                    documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
-                if always_phone or only_fone:
-                    # Get the DDD from the city data using the new method
-                    city_data = location_sampler.get_city_data_by_name(city_name, state_abbr)
-                    
-                    # Get the ddd from city_data
-                    ddd = city_data.get('ddd')
-                    if not ddd:
-                        logger.error(f"No DDD found for city {city_name}, {state_abbr}. Cannot generate phone number.")
-                        raise ValueError(f"No DDD found for city {city_name}, {state_abbr}. Cannot generate phone number.")
-                    
-                    logger.info(f"Using DDD {ddd} from city {city_name} for phone number generation")
-                    documents['phone'] = generate_phone_number(ddd)
-                    # Store the original city and DDD used for the phone number
-                    documents['_phone_metadata'] = {'original_city': city_name, 'ddd': ddd, 'state_abbr': state_abbr}
-
-                results.append((None, None, documents))
-
-                # Report progress if callback is provided
-                if progress_callback and i % max(1, actual_qty // 100) == 0:
-                    progress_callback(i + 1, 'Generating documents')
-
-        elif any([only_cpf, only_pis, only_cnpj, only_cei, only_rg, only_fone]):
-            # Handle document-only generation with proper state handling
-            for i in range(actual_qty):
-                documents = {}
-
-                # No need to reload location data - already loaded once at the beginning
-
-                # Generate location first to get proper state for RG
-                state_name, state_abbr, city_name = location_sampler.get_state_and_city()
-                if only_cpf:
-                    documents['cpf'] = doc_sampler.generate_cpf()
-                if only_pis:
-                    documents['pis'] = doc_sampler.generate_pis()
-                if only_cnpj:
-                    documents['cnpj'] = doc_sampler.generate_cnpj()
-                if only_cei:
-                    documents['cei'] = doc_sampler.generate_cei()
-                if only_rg:
-                    documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
-                if only_fone:
-                    # Get the DDD from the city data using the new method
-                    city_data = location_sampler.get_city_data_by_name(city_name, state_abbr)
-                    
-                    # Get the ddd from city_data
-                    ddd = city_data.get('ddd')
-                    if not ddd:
-                        logger.error(f"No DDD found for city {city_name}, {state_abbr}. Cannot generate phone number.")
-                        raise ValueError(f"No DDD found for city {city_name}, {state_abbr}. Cannot generate phone number.")
-                    
-                    logger.info(f"Using DDD {ddd} from city {city_name} for phone number generation")
-                    documents['phone'] = generate_phone_number(ddd)
-                    # Store the original city and DDD used for the phone number
-                    documents['_phone_metadata'] = {'original_city': city_name, 'ddd': ddd, 'state_abbr': state_abbr}
-
-                results.append((None, None, documents))
-
-                # Report progress if callback is provided
-                if progress_callback and i % max(1, actual_qty // 100) == 0:
-                    progress_callback(i + 1, 'Generating specific documents')
-
-        elif return_only_name or only_surname or only_middle:
-            # Name-only generation
-            for i in range(actual_qty):
-                documents = {}
-                name_components = None
-
-                # No need to reload location data - already loaded once at the beginning
-
-                # Generate location first to get proper state and DDD
-                state_name, state_abbr, city_name = location_sampler.get_state_and_city()
-
+        # Create a list to store our location items
+        location_items = []
+        
+        # Generate the requested number of samples
+        for i in range(actual_qty):
+            # Generate location information
+            state_name, state_abbr, city_name = location_sampler.get_state_and_city()
+            cep = location_sampler._get_random_cep_for_city(city_name)
+            
+            # Format the CEP with or without dash as requested
+            formatted_cep = cep
+            if not cep_without_dash and len(cep) == 8:
+                formatted_cep = f'{cep[:5]}-{cep[5:]}'
+            
+            # Generate name components
+            name_components = None
+            if not only_document:
                 if only_surname:
                     name_components = NameComponents(
                         '', None, name_sampler.get_random_surname(top_40=top_40, raw=name_raw, with_only_one_surname=with_only_one_surname)
@@ -679,313 +449,163 @@ def sample(
                         always_middle=always_middle,
                         return_components=True,
                     )
-
-                    # Add documents for full names
-                    if always_cpf:
-                        documents['cpf'] = doc_sampler.generate_cpf()
-                    if always_pis:
-                        documents['pis'] = doc_sampler.generate_pis()
-                    if always_cnpj:
-                        documents['cnpj'] = doc_sampler.generate_cnpj()
-                    if always_cei:
-                        documents['cei'] = doc_sampler.generate_cei()
-                    if always_rg:
-                        # Use the generated state for RG
-                        documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
-                    if always_phone or only_fone:
-                        # Get the DDD from the city data using the new method
-                        city_data = location_sampler.get_city_data_by_name(city_name, state_abbr)
-                        
-                        # Get the ddd from city_data
-                        ddd = city_data.get('ddd')
-                        if not ddd:
-                            logger.error(f"No DDD found for city {city_name}, {state_abbr}. Cannot generate phone number.")
-                            raise ValueError(f"No DDD found for city {city_name}, {state_abbr}. Cannot generate phone number.")
-                        
-                        logger.info(f"Using DDD {ddd} from city {city_name} for phone number generation")
-                        documents['phone'] = generate_phone_number(ddd)
-                        # Store the original city and DDD used for the phone number
-                        documents['_phone_metadata'] = {'original_city': city_name, 'ddd': ddd, 'state_abbr': state_abbr}
-
-                # Add the location string for name-only results
-                location_str = f'{city_name} - , {state_name} ({state_abbr})'
-                results.append((location_str, name_components, documents))
-
-                # Report progress if callback is provided
-                if progress_callback and i % max(1, actual_qty // 100) == 0:
-                    progress_callback(i + 1, 'Generating names')
-        else:
-            # Standard data generation - this path is only used when all_data is False
-            # Store location info with results to avoid regenerating later
-            location_info = []
-
-            for i in range(actual_qty):
-                # Format location string
-                state_name, state_abbr, city_name = location_sampler.get_state_and_city()
-                cep = location_sampler._get_random_cep_for_city(city_name)
-
-                # Store the location info for later use
-                location_info.append((state_name, state_abbr, city_name, cep))
-
-                if not cep_without_dash and cep and len(cep) == 8:
-                    cep = f'{cep[:5]}-{cep[5:]}'
-
-                # Generate name components
-                name_components = name_sampler.get_random_name(
-                    time_period=time_period,
-                    raw=name_raw,
-                    include_surname=True,
-                    top_40=top_40,
-                    with_only_one_surname=with_only_one_surname,
-                    always_middle=always_middle,
-                    return_components=True,
-                )
-
-                # Generate documents
-                documents = {}
-                if always_cpf:
-                    documents['cpf'] = doc_sampler.generate_cpf()
-                if always_pis:
-                    documents['pis'] = doc_sampler.generate_pis()
-                if always_cnpj:
-                    documents['cnpj'] = doc_sampler.generate_cnpj()
-                if always_cei:
-                    documents['cei'] = doc_sampler.generate_cei()
-                if always_rg:
-                    documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
-                if always_phone or only_fone:
-                    # Get the DDD from the city data using the new method
-                    city_data = location_sampler.get_city_data_by_name(city_name, state_abbr)
-                    
-                    # Get the ddd from city_data
-                    ddd = city_data.get('ddd')
-                    if not ddd:
-                        logger.error(f"No DDD found for city {city_name}, {state_abbr}. Cannot generate phone number.")
-                        raise ValueError(f"No DDD found for city {city_name}, {state_abbr}. Cannot generate phone number.")
-                    
-                    logger.info(f"Using DDD {ddd} from city {city_name} for phone number generation")
-                    documents['phone'] = generate_phone_number(ddd)
-                    # Store the original city and DDD used for the phone number
-                    documents['_phone_metadata'] = {'original_city': city_name, 'ddd': ddd, 'state_abbr': state_abbr}
-
-                # Format location string
-                if city_only:
-                    location = city_name
-                elif state_abbr_only:
-                    location = state_abbr
-                elif state_full_only:
-                    location = state_name
-                elif only_cep:
-                    location = location_sampler._get_random_cep_for_city(city_name)
-                    location = location_sampler._format_cep(location, not cep_without_dash)
+            
+            # Generate a new location item
+            location_item = LocationItem(
+                cep=formatted_cep,
+                city_name=city_name,
+                city_uf=state_abbr,
+                state=state_name,
+            )
+            
+            # Add name information if available
+            if name_components:
+                location_item.name = name_components.first_name
+                location_item.middle_name = name_components.middle_name
+                location_item.surnames = name_components.surname
+            
+            # Generate documents as requested
+            if always_cpf or only_cpf:
+                location_item.cpf = doc_sampler.generate_cpf()
+            if always_pis or only_pis:
+                location_item.pis = doc_sampler.generate_pis()
+            if always_cnpj or only_cnpj:
+                location_item.cnpj = doc_sampler.generate_cnpj()
+            if always_cei or only_cei:
+                location_item.cei = doc_sampler.generate_cei()
+            if always_rg or only_rg:
+                location_item.rg = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
+            if always_phone or only_fone:
+                # Get the DDD from the city data
+                city_data = location_sampler.get_city_data_by_name(city_name, state_abbr)
+                ddd = city_data.get('ddd')
+                if ddd:
+                    location_item.phone = generate_phone_number(ddd)
                 else:
-                    location = location_sampler.format_full_location(
-                        city_name, state_name, state_abbr, include_cep=True, cep_without_dash=cep_without_dash
-                    )
-
-                results.append((location, name_components, documents))
-
-                # Report progress if callback is provided
-                if progress_callback and i % max(1, actual_qty // 100) == 0:
-                    progress_callback(i + 1, 'Generating complete profiles')
-
-            # Continue with the standard flow for all cases when not all_data
-            # This section only applies to the non-all_data path
-            if not all_data:
-                # Use the location data we already have instead of regenerating
-                all_ceps = []
-                all_state_city_info = []
-
-                # Update progress to indicate we're starting address generation
-                if progress_callback:
-                    progress_callback(actual_qty // 2, 'Preparing address data')  # Show approximately half-way progress
-
-                # For all types of generation - reuse the previously generated location info
-                for state_name, state_abbr, city_name, cep in location_info:
-                    all_state_city_info.append((state_name, state_abbr, city_name))
-
-                    # Format the CEP if needed
-                    formatted_cep = cep
-                    if not cep_without_dash and len(formatted_cep) == 8:
-                        formatted_cep = f'{formatted_cep[:5]}-{formatted_cep[5:]}'
-
-                    all_ceps.append(formatted_cep)
-
-                # Update progress to indicate we're making API calls if applicable
-                if progress_callback and make_api_call:
-                    progress_callback(actual_qty * 3 // 4, 'API calls starting')  # Show approximately 75% progress
-
-                # Create the results_with_state_info list with the location, name_components, and documents
-                results_with_state_info = []
-                for i in range(actual_qty):
-                    state_name, state_abbr, city_name = all_state_city_info[i]
-                    formatted_cep = all_ceps[i]
-
-                    # Format the full location string with CEP
-                    # The parse_result function expects the format: "city - cep, state (abbr)"
-                    location_str = f'{city_name} - {formatted_cep}, {state_name} ({state_abbr})'
-
-                    # Get the corresponding result
-                    location, name_components, documents = results[i]
-
-                    # Add to the new results list with state_info
-                    results_with_state_info.append((location_str, name_components, documents))
-
-                # Use the new batched processing function instead of doing everything at once
-                parsed_results = await process_and_save_in_batches(
-                    all_ceps,
-                    all_state_city_info,
-                    results_with_state_info,
-                    make_api_call,
-                    save_to_jsonl,  # Pass the save_to_jsonl path if saving is requested
-                    append_to_jsonl,
-                    progress_callback,
-                    batch_size=100  # Process in batches of 100 items
-                )
-            else:
-                # This is the all_data=True path - we need to handle API calls here as well
-                logger.info(f"Processing all_data=True path with make_api_call={make_api_call}")
-                
-                # For all_data=True path, let's generate state-city-CEP combinations directly 
-                # to ensure consistency and proper weighting
-                all_ceps = []
-                all_state_city_info = []
-                
-                # Generate state-city-CEP combinations using proper weighted selection
-                for i in range(actual_qty):
-                    # Get state and city using weighted population selection
-                    state_name, state_abbr, city_name = location_sampler.get_state_and_city()
-                    
-                    # Get a CEP from that city - this will use the weighted method
-                    cep = location_sampler._get_random_cep_for_city(city_name)
-                    
-                    # Format the CEP if needed
-                    if not cep_without_dash and len(cep) == 8:
-                        cep = f"{cep[:5]}-{cep[5:]}"
-                    
-                    # Store the location info
-                    all_state_city_info.append((state_name, state_abbr, city_name))
-                    all_ceps.append(cep)
-                    
-                    # Report progress occasionally
-                    if progress_callback and i % max(1, actual_qty // 10) == 0:
-                        progress_callback(i // 2, f"Generating location data {i + 1}/{actual_qty}")
-                
-                # Report progress
-                if progress_callback:
-                    progress_callback(actual_qty // 2, "Preparing for API calls")
-                
-                # Make API calls if requested
-                if make_api_call:
-                    if progress_callback:
-                        progress_callback(actual_qty * 3 // 4, "API calls starting")
-                    
-                    logger.info(f"Making API calls for {len(all_ceps)} CEPs in all_data=True mode")
-                    all_address_data = asyncio.run(get_address_data_batch(all_ceps, make_api_call, progress_callback))
-                    
-                    if progress_callback:
-                        progress_callback(actual_qty * 4 // 5, "API calls completed")
-                else:
-                    # Generate synthetic address data
-                    logger.info(f"Generating synthetic address data for {len(all_ceps)} CEPs in all_data=True mode")
-                    all_address_data = asyncio.run(get_address_data_batch(all_ceps, False, progress_callback))
-                
-                # Report progress
-                if progress_callback:
-                    progress_callback(actual_qty * 9 // 10, "Processing results")
-                
-                # Rebuild the results with the new data
-                results_with_state_info = []
-                for i in range(actual_qty):
-                    state_name, state_abbr, city_name = all_state_city_info[i]
-                    formatted_cep = all_ceps[i]
-                    
-                    # Format the location string with CEP
-                    location_str = f"{city_name} - {formatted_cep}, {state_name} ({state_abbr})"
-                    
-                    # Get original name and documents, or generate new ones if needed
-                    if i < len(results):
-                        _, name_components, documents = results[i]
-                    else:
-                        # If somehow we don't have enough results, generate new name components and documents
-                        name_components = name_sampler.get_random_name(
-                            time_period=time_period,
-                            raw=name_raw,
-                            include_surname=True,
-                            top_40=top_40,
-                            with_only_one_surname=with_only_one_surname,
-                            always_middle=always_middle,
-                            return_components=True,
-                        )
-                        
-                        # Generate documents using the correct state abbreviation
-                        documents = {}
-                        if always_cpf:
-                            documents['cpf'] = doc_sampler.generate_cpf()
-                        if always_pis:
-                            documents['pis'] = doc_sampler.generate_pis()
-                        if always_cnpj:
-                            documents['cnpj'] = doc_sampler.generate_cnpj()
-                        if always_cei:
-                            documents['cei'] = doc_sampler.generate_cei()
-                        if always_rg:
-                            documents['rg'] = f'{doc_sampler.generate_rg(state_abbr, include_issuer)}'
-                        if always_phone or only_fone:
-                            # Get the DDD from the city data
-                            city_data = location_sampler.get_city_data_by_name(city_name, state_abbr)
-                            
-                            # Get the ddd from city_data, which must come from calling get_state_and_city()
-                            ddd = city_data.get('ddd')
-                            if not ddd:
-                                logger.error(f"No DDD found for city {city_name}. Cannot generate phone number.")
-                                raise ValueError(f"No DDD found for city {city_name}. Cannot generate phone number.")
-                            
-                            logger.info(f"Using DDD {ddd} from city {city_name} for phone number generation")
-                            documents['phone'] = generate_phone_number(ddd)
-                            # Store the original city and DDD used for the phone number
-                            documents['_phone_metadata'] = {'original_city': city_name, 'ddd': ddd, 'state_abbr': state_abbr}
-
-                    # Add to the results list
-                    results_with_state_info.append((location_str, name_components, documents))
-                
-                # Convert to the proper dictionary format
-                parsed_results = []
-                for i, (location, name_components, documents) in enumerate(results_with_state_info):
-                    # Get address data
-                    address_data = all_address_data[i] if i < len(all_address_data) else {}
-                    
-                    # Parse the result
-                    result_dict = parse_result(
-                        location,
-                        name_components,
-                        documents,
-                        state_info=all_state_city_info[i],
-                        address_data=address_data,
-                    )
-                    parsed_results.append(result_dict)
-
-            # Save to JSONL if path is provided
-            if save_to_jsonl:
-                mode = 'a' if append_to_jsonl else 'w'
-                logger.info(f'Saving results to {save_to_jsonl} (mode: {mode})')
-
-                try:
-                    # Use the existing helper function
-                    if isinstance(parsed_results, list):
-                        asyncio.run(save_to_jsonl_file(parsed_results, save_to_jsonl, append=append_to_jsonl))
-                    else:
-                        asyncio.run(save_to_jsonl_file([parsed_results], save_to_jsonl, append=append_to_jsonl))
-
-                    logger.info(f'Successfully saved {actual_qty} results to {save_to_jsonl}')
-                except Exception as e:
-                    logger.error(f'Error saving to JSONL file: {e}')
-                    print(f'Error saving to JSONL file: {e}')
-
-            # Apply progress callback for completion if provided
+                    logger.warning(f"No DDD found for city {city_name}, {state_abbr}. Cannot generate phone number.")
+            
+            # Add the location item to our list
+            location_items.append(location_item)
+            
+            # Report progress if callback is provided
+            if progress_callback and i % max(1, actual_qty // 10) == 0:
+                await progress_callback(i + 1, f'Generated {i+1}/{actual_qty} items')
+        
+        # Process the location items to add address data and save results
+        if make_api_call or save_to_jsonl:
+            processed_items = await process_and_save_in_batches(
+                location_items,
+                make_api_call,
+                save_to_jsonl,
+                append_to_jsonl,
+                progress_callback,
+                batch_size=batch_size,  # Use provided batch_size
+                num_workers=num_workers  # Use provided num_workers
+            )
+            
+            # Update progress if callback is provided
             if progress_callback:
-                progress_callback(actual_qty, 'Completed')
-
-            return parsed_results[0] if actual_qty == 1 else parsed_results
+                await progress_callback(actual_qty, 'Completed')
+            
+            # Return a single item or the whole list based on qty
+            return processed_items[0] if actual_qty == 1 else processed_items
+        else:
+            # If no API calls or saving needed, just return the items as is
+            return location_items[0] if actual_qty == 1 else location_items
+    
     except Exception as e:
-        # Re-raise the exception with more context
+        logger.error(f'Error generating samples: {e}')
         raise RuntimeError(f'Error generating samples: {e}') from e
+
+
+def sample_sync(
+    qty: int = 1,
+    q: int | None = None,
+    city_only: bool = False,
+    state_abbr_only: bool = False,
+    state_full_only: bool = False,
+    only_cep: bool = False,
+    cep_without_dash: bool = False,
+    make_api_call: bool = False,
+    time_period: TimePeriod = TimePeriod.UNTIL_2010,
+    return_only_name: bool = False,
+    name_raw: bool = False,
+    json_path: str | Path = Path(__file__).parent / 'data' / 'location_data.json',
+    names_path: str | Path = Path(__file__).parent / 'data' / 'names_data.json',
+    middle_names_path: str | Path = Path(__file__).parent / 'data' / 'middle_names.json',
+    only_surname: bool = False,
+    top_40: bool = False,
+    with_only_one_surname: bool = False,
+    always_middle: bool = False,
+    only_middle: bool = False,
+    always_cpf: bool = False,
+    always_pis: bool = False,
+    always_cnpj: bool = False,
+    always_cei: bool = False,
+    always_rg: bool = False,
+    always_phone: bool = False,
+    only_cpf: bool = False,
+    only_pis: bool = False,
+    only_cnpj: bool = False,
+    only_cei: bool = False,
+    only_rg: bool = False,
+    only_fone: bool = False,
+    include_issuer: bool = False,
+    only_document: bool = False,
+    surnames_path: str | Path = Path(__file__).parent / 'data' / 'surnames_data.json',
+    locations_path: str | Path = '',
+    save_to_jsonl: str | None = None,
+    all_data: bool = False,
+    progress_callback: callable = None,
+    append_to_jsonl: bool = True,
+    batch_size: int = 100,
+    num_workers: int = 100,
+) -> List[LocationItem] | LocationItem:
+    """Synchronous wrapper for the async sample function.
+    
+    This provides backward compatibility for code that expects a synchronous function.
+    All parameters are passed directly to the async sample function.
+    """
+    return asyncio.run(sample(
+        qty=qty,
+        q=q,
+        city_only=city_only,
+        state_abbr_only=state_abbr_only,
+        state_full_only=state_full_only,
+        only_cep=only_cep,
+        cep_without_dash=cep_without_dash,
+        make_api_call=make_api_call,
+        time_period=time_period,
+        return_only_name=return_only_name,
+        name_raw=name_raw,
+        json_path=json_path,
+        names_path=names_path,
+        middle_names_path=middle_names_path,
+        only_surname=only_surname,
+        top_40=top_40,
+        with_only_one_surname=with_only_one_surname,
+        always_middle=always_middle,
+        only_middle=only_middle,
+        always_cpf=always_cpf,
+        always_pis=always_pis,
+        always_cnpj=always_cnpj,
+        always_cei=always_cei,
+        always_rg=always_rg,
+        always_phone=always_phone,
+        only_cpf=only_cpf,
+        only_pis=only_pis,
+        only_cnpj=only_cnpj,
+        only_cei=only_cei,
+        only_rg=only_rg,
+        only_fone=only_fone,
+        include_issuer=include_issuer,
+        only_document=only_document,
+        surnames_path=surnames_path,
+        locations_path=locations_path,
+        save_to_jsonl=save_to_jsonl,
+        all_data=all_data,
+        progress_callback=progress_callback,
+        append_to_jsonl=append_to_jsonl,
+        batch_size=batch_size,
+        num_workers=num_workers,
+    ))

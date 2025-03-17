@@ -1,14 +1,26 @@
 import os
 import sys
+import asyncio
 from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-import typer
+# Import uvloop for faster asyncio performance
+import uvloop
+
+# Shut down standard logging to prevent INFO logs from libraries
+import logging
+logging.getLogger().setLevel(logging.WARNING)
+for handler in logging.getLogger().handlers:
+    handler.setLevel(logging.WARNING)
+
+from async_typer import AsyncTyper
+from typer import Option, Exit
 from loguru import logger
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.table import Table
+from rich.panel import Panel
 
 # Handle imports for both direct script execution and module import
 try:
@@ -23,21 +35,35 @@ except ImportError:
 # Configure logger
 logger.remove()  # Remove default handler
 
-# Add stderr logger for console output
+# Add stderr logger for console output - filter out DEBUG and INFO messages
 logger.add(
     sys.stderr,
-    format='<blue>{time:YYYY-MM-DD HH:mm:ss}</blue> | <level>{level: <8}</level> | <yellow>{name}:{line}</yellow> - <level>{message}</level>',
-    filter=lambda record: record['level'].name != 'DEBUG',
+    format='<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <blue>{name}:{line}</blue> - <level>{message}</level>',
+    filter=lambda record: record['level'].name in ['WARNING', 'ERROR', 'CRITICAL'],
+    level='WARNING',  # This makes the handler only process WARNING and above
+    backtrace=True,
+    diagnose=True,
+    colorize=True,
+)
+
+# Configure default logger level to WARNING for all modules
+logger.configure(handlers=[{"sink": sys.stderr, "level": "WARNING"}])
+
+# Add file logger for persistent logs - includes all messages
+logger.add(
+    'ptbr_sampler.log',
+    rotation='10 MB',
+    format='{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{line} - {message}',
     level='INFO',
     backtrace=True,
     diagnose=True,
 )
 
-# Add file logger for persistent logs
+# Add special detailed log file for all messages including debug
 logger.add(
-    'ptbr_sampler.log',
+    'ptbr_sampler.log.all',
     rotation='10 MB',
-    format='{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{line} - {message}',
+    format='{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}',
     level='DEBUG',
     backtrace=True,
     diagnose=True,
@@ -50,35 +76,35 @@ BRASILIA_TZ = timezone(timedelta(hours=-3))
 logger.configure(extra={'timezone': BRASILIA_TZ})
 
 console = Console()
-app = typer.Typer(help='BR data sampler CLI', add_completion=False)
+app = AsyncTyper(help='BR data sampler CLI', add_completion=False)
 
 # Define options at module level organized by panels
 # Basic options
-DEFAULT_QTY = typer.Option(1, '--qty', '-q', help='Number of samples to generate', rich_help_panel='Basic Options')
-ALL_DATA = typer.Option(False, '--all', '-a', help='Include all possible data in the generated samples', rich_help_panel='Basic Options')
-SAVE_TO_JSONL = typer.Option(None, '--save-to-jsonl', '-sj', help='Save generated samples to a JSONL file', rich_help_panel='Basic Options')
-APPEND_TO_JSONL = typer.Option(True, '--append', '-ap', help='Append to JSONL file instead of overwriting', rich_help_panel='Basic Options')
+DEFAULT_QTY = Option(1, '--qty', '-q', help='Number of samples to generate', rich_help_panel='Basic Options')
+ALL_DATA = Option(False, '--all', '-a', help='Include all possible data in the generated samples', rich_help_panel='Basic Options')
+SAVE_TO_JSONL = Option(None, '--save-to-jsonl', '-sj', help='Save generated samples to a JSONL file', rich_help_panel='Basic Options')
+APPEND_TO_JSONL = Option(True, '--append', '-ap', help='Append to JSONL file instead of overwriting', rich_help_panel='Basic Options')
 # New convenience options
-BATCH = typer.Option(
+BATCH = Option(
     50,
     '--batch',
     '-b',
     help='Maximum samples per batch before saving (processes large requests in smaller chunks)',
     rich_help_panel='Basic Options',
 )
-EASY = typer.Option(
+EASY = Option(
     None, '--easy', '-e', help='Easy mode with integer qty (enables API calls, all data, and auto-saves)', rich_help_panel='Basic Options'
 )
 
 # Location options
-CITY_ONLY = typer.Option(False, '--city-only', '-c', help='Return only city names', rich_help_panel='Location Options')
-STATE_ABBR_ONLY = typer.Option(
+CITY_ONLY = Option(False, '--city-only', '-c', help='Return only city names', rich_help_panel='Location Options')
+STATE_ABBR_ONLY = Option(
     False, '--state-abbr-only', '-sa', help='Return only state abbreviations', rich_help_panel='Location Options'
 )
-STATE_FULL_ONLY = typer.Option(False, '--state-full-only', '-sf', help='Return only full state names', rich_help_panel='Location Options')
-ONLY_CEP = typer.Option(False, '--only-cep', '-oc', help='Return only CEP', rich_help_panel='Location Options')
-CEP_WITHOUT_DASH = typer.Option(False, '--cep-without-dash', '-nd', help='Return CEP without dash', rich_help_panel='Location Options')
-MAKE_API_CALL = typer.Option(
+STATE_FULL_ONLY = Option(False, '--state-full-only', '-sf', help='Return only full state names', rich_help_panel='Location Options')
+ONLY_CEP = Option(False, '--only-cep', '-oc', help='Return only CEP', rich_help_panel='Location Options')
+CEP_WITHOUT_DASH = Option(False, '--cep-without-dash', '-nd', help='Return CEP without dash', rich_help_panel='Location Options')
+MAKE_API_CALL = Option(
     False,
     '--make-api-call',
     '-mac',
@@ -87,61 +113,61 @@ MAKE_API_CALL = typer.Option(
 )
 
 # Name options
-TIME_PERIOD = typer.Option(
+TIME_PERIOD = Option(
     TimePeriod.UNTIL_2010, '--time-period', '-t', help='Time period for name sampling', rich_help_panel='Name Options'
 )
-RETURN_ONLY_NAME = typer.Option(
+RETURN_ONLY_NAME = Option(
     False, '--return-only-name', '-rn', help='Return only the name without location', rich_help_panel='Name Options'
 )
-NAME_RAW = typer.Option(False, '--name-raw', '-r', help='Return names in raw format (all caps)', rich_help_panel='Name Options')
-ONLY_SURNAME = typer.Option(False, '--only-surname', '-s', help='Return only surname', rich_help_panel='Name Options')
-TOP_40 = typer.Option(False, '--top-40', '-t40', help='Use only top 40 surnames', rich_help_panel='Name Options')
-WITH_ONLY_ONE_SURNAME = typer.Option(
+NAME_RAW = Option(False, '--name-raw', '-r', help='Return names in raw format (all caps)', rich_help_panel='Name Options')
+ONLY_SURNAME = Option(False, '--only-surname', '-s', help='Return only surname', rich_help_panel='Name Options')
+TOP_40 = Option(False, '--top-40', '-t40', help='Use only top 40 surnames', rich_help_panel='Name Options')
+WITH_ONLY_ONE_SURNAME = Option(
     False, '--one-surname', '-os', help='Return only one surname instead of two', rich_help_panel='Name Options'
 )
-ALWAYS_MIDDLE = typer.Option(False, '--always-middle', '-am', help='Always include a middle name', rich_help_panel='Name Options')
-ONLY_MIDDLE = typer.Option(False, '--only-middle', '-om', help='Return only middle name', rich_help_panel='Name Options')
+ALWAYS_MIDDLE = Option(False, '--always-middle', '-am', help='Always include a middle name', rich_help_panel='Name Options')
+ONLY_MIDDLE = Option(False, '--only-middle', '-om', help='Return only middle name', rich_help_panel='Name Options')
 
 # Document options
-ONLY_DOCUMENT = typer.Option(False, '--only-document', '-od', help='Return only documents', rich_help_panel='Document Options')
-ALWAYS_CPF = typer.Option(True, '--always-cpf', '-ac', help='Always include CPF', rich_help_panel='Document Options')
-ALWAYS_PIS = typer.Option(False, '--always-pis', '-ap', help='Always include PIS', rich_help_panel='Document Options')
-ALWAYS_CNPJ = typer.Option(False, '--always-cnpj', '-acn', help='Always include CNPJ', rich_help_panel='Document Options')
-ALWAYS_CEI = typer.Option(False, '--always-cei', '-ace', help='Always include CEI', rich_help_panel='Document Options')
-ALWAYS_RG = typer.Option(True, '--always-rg', '-ar', help='Always include RG', rich_help_panel='Document Options')
-ALWAYS_PHONE = typer.Option(True, '--always-phone', '-aph', help='Always include phone number', rich_help_panel='Local e Fone')
-ONLY_CPF = typer.Option(False, '--only-cpf', '-ocpf', help='Return only CPF', rich_help_panel='Document Options')
-ONLY_PIS = typer.Option(False, '--only-pis', '-op', help='Return only PIS', rich_help_panel='Document Options')
-ONLY_CNPJ = typer.Option(False, '--only-cnpj', '-ocn', help='Return only CNPJ', rich_help_panel='Document Options')
-ONLY_CEI = typer.Option(False, '--only-cei', '-oce', help='Return only CEI', rich_help_panel='Document Options')
-ONLY_RG = typer.Option(False, '--only-rg', '-or', help='Return only RG', rich_help_panel='Document Options')
-ONLY_FONE = typer.Option(False, '--only-fone', '-of', help='Return only phone number', rich_help_panel='Local e Fone')
-INCLUDE_ISSUER = typer.Option(
+ONLY_DOCUMENT = Option(False, '--only-document', '-od', help='Return only documents', rich_help_panel='Document Options')
+ALWAYS_CPF = Option(True, '--always-cpf', '-ac', help='Always include CPF', rich_help_panel='Document Options')
+ALWAYS_PIS = Option(False, '--always-pis', '-ap', help='Always include PIS', rich_help_panel='Document Options')
+ALWAYS_CNPJ = Option(False, '--always-cnpj', '-acn', help='Always include CNPJ', rich_help_panel='Document Options')
+ALWAYS_CEI = Option(False, '--always-cei', '-ace', help='Always include CEI', rich_help_panel='Document Options')
+ALWAYS_RG = Option(True, '--always-rg', '-ar', help='Always include RG', rich_help_panel='Document Options')
+ALWAYS_PHONE = Option(True, '--always-phone', '-aph', help='Always include phone number', rich_help_panel='Local e Fone')
+ONLY_CPF = Option(False, '--only-cpf', '-ocpf', help='Return only CPF', rich_help_panel='Document Options')
+ONLY_PIS = Option(False, '--only-pis', '-op', help='Return only PIS', rich_help_panel='Document Options')
+ONLY_CNPJ = Option(False, '--only-cnpj', '-ocn', help='Return only CNPJ', rich_help_panel='Document Options')
+ONLY_CEI = Option(False, '--only-cei', '-oce', help='Return only CEI', rich_help_panel='Document Options')
+ONLY_RG = Option(False, '--only-rg', '-or', help='Return only RG', rich_help_panel='Document Options')
+ONLY_FONE = Option(False, '--only-fone', '-of', help='Return only phone number', rich_help_panel='Local e Fone')
+INCLUDE_ISSUER = Option(
     True, '--include-issuer', '-ii', help='Include issuer in RG (default: True)', rich_help_panel='Document Options'
 )
 
 # Data source options
-JSON_PATH = typer.Option(
+JSON_PATH = Option(
     'ptbr_sampler/data/cities_with_ceps.json',
     '--json-path',
     '-j',
     help='Path to the cities and CEPs data JSON file',
     rich_help_panel='Data Source Options',
 )
-NAMES_PATH = typer.Option(
+NAMES_PATH = Option(
     'ptbr_sampler/data/names_data.json', '--names-path', '-np', help='Path to the first names data JSON file', rich_help_panel='Data Source Options'
 )
-MIDDLE_NAMES_PATH = typer.Option(
+MIDDLE_NAMES_PATH = Option(
     'ptbr_sampler/data/middle_names.json',
     '--middle-names-path',
     '-mnp',
     help='Path to the middle names JSON file',
     rich_help_panel='Data Source Options',
 )
-SURNAMES_PATH = typer.Option(
+SURNAMES_PATH = Option(
     'ptbr_sampler/data/surnames_data.json', '--surnames-path', '-sp', help='Path to the surnames JSON file', rich_help_panel='Data Source Options'
 )
-LOCATIONS_PATH = typer.Option(
+LOCATIONS_PATH = Option(
     'ptbr_sampler/data/locations_data.json',
     '--locations-path',
     '-lp',
@@ -226,7 +252,7 @@ def create_results_table(
         padding=(0, 1),  # Add minimal padding for readability
         title_style='bright_yellow',
         border_style='blue',
-        header_style='bright_blue',
+        header_style='bright_green',
         expand=True,
         collapse_padding=True,
     )
@@ -235,19 +261,19 @@ def create_results_table(
     table.add_column('Id', justify='right', style='bright_yellow', no_wrap=True, width=5)
 
     if only_document:
-        table.add_column('Documentos', style='yellow', overflow='fold', max_width=50)
+        table.add_column('Documentos', style='green', overflow='fold', max_width=50)
     else:
         if not only_location:
             # Name columns
-            table.add_column('Nome', style='bright_blue', width=21)
-            table.add_column('Nome do Meio', style='blue', width=22)
-            table.add_column('Sobrenome', style='blue', width=23)
+            table.add_column('Nome', style='bright_green', width=21)
+            table.add_column('Nome do Meio', style='green', width=22)
+            table.add_column('Sobrenome', style='green', width=23)
 
         if not return_only_name:
             # Location and documents columns
             table.add_column('Local', style='bright_yellow', width=30)
             table.add_column('Logradouro', style='yellow', width=50)
-            table.add_column('Documentos', style='yellow', overflow='fold', width=28)
+            table.add_column('Documentos', style='green', overflow='fold', width=28)
 
     # Process and add rows
     for idx, result in enumerate(results, 1):
@@ -309,8 +335,8 @@ def create_results_table(
     return table
 
 
-@app.command()
-def sample(
+@app.async_command()
+async def sample(
     qty: int = DEFAULT_QTY,
     city_only: bool = CITY_ONLY,
     state_abbr_only: bool = STATE_ABBR_ONLY,
@@ -402,7 +428,9 @@ def sample(
     try:
         # Process easy mode if specified
         if easy is not None:
-            console.print('[bright_yellow]Easy mode enabled[/bright_yellow]')
+            console.print(Panel('[bright_yellow]Modo Fácil Ativado[/bright_yellow]', 
+                               title="[bright_green]PTBR Sampler[/bright_green]", 
+                               border_style="green"))
             logger.info(f'Easy mode enabled with quantity: {easy}')
             qty = easy
             make_api_call = True
@@ -428,33 +456,39 @@ def sample(
             use_batches = batch_size < qty  # Only use batches if we have multiple batches
 
             if use_batches:
-                console.print(f'[bright_blue]Processing {qty} samples in batches of {batch_size}[/bright_blue]')
+                total_batches = (qty + batch_size - 1) // batch_size
+                console.print(Panel(
+                    f"[bright_green]Processando[/bright_green] [bright_yellow]{qty}[/bright_yellow] [bright_green]amostras em[/bright_green] [bright_yellow]{total_batches}[/bright_yellow] [bright_green]lotes de[/bright_green] [bright_yellow]{batch_size}[/bright_yellow] [bright_green]cada[/bright_green]",
+                    title="[bright_green]Configuração de Lotes[/bright_green]",
+                    border_style="bright_yellow"
+                ))
                 logger.info(f'Batch mode enabled: {qty} samples in batches of {batch_size}')
             else:
-                console.print(f'[bright_blue]Batch size ({batch_size}) equals or exceeds total quantity ({qty})[/bright_blue]')
+                console.print(f'[bright_green]Lote único:[/bright_green] [yellow]tamanho do lote ({batch_size}) é maior ou igual à quantidade total ({qty})[/yellow]')
                 logger.info(f'Single batch mode: batch size {batch_size} >= quantity {qty}')
 
         # Show configuration summary for batch or easy modes
         if batch is not None or easy is not None:
-            config_summary = [
-                f'Quantity: {qty}',
-                f'Make API call: [{"bright_blue" if make_api_call else "dim yellow"}]{make_api_call}[/]',
-                f'All data: [{"bright_blue" if all_data else "dim yellow"}]{all_data}[/]',
-                f'Always phone: [{"bright_blue" if always_phone else "dim yellow"}]{always_phone}[/]',
-            ]
+            config_items = []
+            
+            config_items.append(f"[bright_green]Quantidade:[/bright_green] [bright_yellow]{qty}[/bright_yellow]")
+            config_items.append(f"[bright_green]Chamada de API:[/bright_green] [{'bright_yellow' if make_api_call else 'dim yellow'}]{make_api_call}[/]")
+            config_items.append(f"[bright_green]Todos os dados:[/bright_green] [{'bright_yellow' if all_data else 'dim yellow'}]{all_data}[/]")
+            config_items.append(f"[bright_green]Incluir telefone:[/bright_green] [{'bright_yellow' if always_phone else 'dim yellow'}]{always_phone}[/]")
+            
             if save_to_jsonl:
-                save_mode = '[bright_blue]append[/]' if append_to_jsonl else '[yellow]overwrite[/]'
-                config_summary.append(f'Save to: [bright_yellow]{save_to_jsonl}[/] ({save_mode})')
+                save_mode = '[bright_yellow]append[/]' if append_to_jsonl else '[yellow]overwrite[/]'
+                config_items.append(f"[bright_green]Salvar em:[/bright_green] [bright_yellow]{save_to_jsonl}[/] ({save_mode})")
                 if use_batches:
-                    config_summary.append(f'Batch size: [bright_yellow]{batch_size}[/] samples')
+                    config_items.append(f"[bright_green]Tamanho do lote:[/bright_green] [bright_yellow]{batch_size}[/] amostras")
 
-            logger.info(
-                f'Configuration: qty={qty}, api={make_api_call}, all_data={all_data}, file={save_to_jsonl}, append={append_to_jsonl}'
-            )
-            console.print('[bold]Configuration:[/bold]')
-            for item in config_summary:
-                console.print(f'  [cyan]•[/cyan] {item}')
-            console.print()
+            config_text = "\n".join(config_items)
+            console.print(Panel(config_text, 
+                             title="[bright_green]Configuração do Gerador[/bright_green]",
+                             border_style="bright_yellow", 
+                             expand=False))
+
+            logger.info(f'Configuration: qty={qty}, api={make_api_call}, all_data={all_data}, file={save_to_jsonl}, append={append_to_jsonl}')
 
         # Process in batches or as a single run
         all_results = []
@@ -462,79 +496,81 @@ def sample(
         if use_batches:
             # Use batched processing with progress display
             logger.info(f'Starting batch processing of {qty} samples')
-            with Progress(
-                SpinnerColumn(),
-                TextColumn('[bright_blue]{task.description}'),
-                BarColumn(complete_style='bright_yellow', finished_style='blue'),
-                TaskProgressColumn(),
-                TextColumn('{task.fields[status]}'),
-                console=console,
-            ) as progress:
-                main_task = progress.add_task('[blue]Generating samples...', total=qty, status='')
+            
+            # Calculate total batches for display
+            total_batches = (qty + batch_size - 1) // batch_size
+            samples_completed = 0
+
+            # Use a simplified progress display with Brazilian colors
+            with Progress() as progress:
+                # Main task - similar to the example
+                main_task = progress.add_task(f'[bright_green]Gerando {qty} amostras...', total=None)
+                
+                # API task if needed
                 api_task = None
                 if make_api_call:
-                    api_task = progress.add_task('[yellow]API calls...', visible=False, total=1.0, status='')
-                batch_task = progress.add_task('[bright_blue]Batch progress...', total=batch_size, visible=False, status='')
-
-                # Keep track of total progress across batches
-                samples_completed = 0
-
+                    api_task = progress.add_task('[bright_yellow]Chamadas de API:', visible=False, total=None)
+                
+                # Batch task
+                batch_task = progress.add_task(f'[bright_green]Lote atual:', visible=False, total=None)
+                
                 # Process each batch
                 first_batch = True
                 while samples_completed < qty:
                     # Calculate batch size for this iteration
                     current_batch_size = min(batch_size, qty - samples_completed)
                     batch_num = samples_completed // batch_size + 1
-                    total_batches = (qty + batch_size - 1) // batch_size
-
-                    logger.info(f'Processing batch {batch_num}/{total_batches} with {current_batch_size} samples')
-
-                    # Update progress displays
+                    
+                    # Update batch task
                     progress.update(
-                        batch_task,
-                        description=f'[bright_blue]Batch {batch_num}/{total_batches}...',
-                        total=current_batch_size,
-                        completed=0,
-                        visible=True,
+                        batch_task, 
+                        visible=True, 
+                        description=f'[bright_green]Lote [bright_yellow]{batch_num}[/bright_yellow]/[bright_yellow]{total_batches}[/bright_yellow]: Preparando...'
                     )
-
-                    # Create a progress callback that updates both total and batch progress
-                    # Create a closure to capture the current values
+                    
+                    # Create progress callback
                     def create_progress_callback(samples_completed_val: int, batch_num_val: int, current_batch_size_val: int) -> callable:
-                        def progress_callback(completed: int, stage: str | None = None) -> None:
+                        async def progress_callback(completed: int, stage: str | None = None) -> None:
                             # Use explicit parameter binding to avoid closure issues
                             nonlocal samples_completed_val, batch_num_val, current_batch_size_val
-
+                            
                             # Calculate total progress
                             total_completed = min(samples_completed_val + completed, qty)
-
-                            # Log significant progress stages
-                            if stage and completed % max(1, current_batch_size_val // 5) == 0:
-                                logger.debug(f'Batch {batch_num_val}: {completed}/{current_batch_size_val} samples - {stage}')
-
-                            # Update total progress
+                            total_percent = min(100, int(total_completed * 100 / qty))
+                            
+                            # Calculate batch progress
+                            batch_percent = min(100, int(completed * 100 / current_batch_size_val))
+                            
+                            # Update main task - simple like example
                             progress.update(
-                                main_task,
-                                completed=total_completed,
-                                status=f'[dim blue]{stage or ""} (Batch {batch_num_val})[/]',
+                                main_task, 
+                                description=f'[bright_green]Gerando {qty} amostras... [bright_yellow]{total_percent}%[/]'
                             )
-
-                            # Update batch progress
-                            progress.update(batch_task, completed=min(completed, current_batch_size_val))
-
-                            # Update API task if relevant
+                            
+                            # Update batch task
+                            progress.update(
+                                batch_task,
+                                description=f'[bright_green]Lote [bright_yellow]{batch_num_val}[/bright_yellow]/[bright_yellow]{total_batches}[/bright_yellow]: [bright_yellow]{batch_percent}%[/]'
+                            )
+                            
+                            # Update API task if needed
                             if api_task and stage and 'API' in stage:
                                 progress.update(api_task, visible=True)
-                                if 'starting' in stage.lower():
-                                    logger.info(f'API calls starting for batch {batch_num_val}')
-                                    progress.update(api_task, completed=0.2, status='[yellow]Connecting...[/]')
+                                if 'starting' in stage.lower() or 'connecting' in stage.lower():
+                                    progress.update(
+                                        api_task,
+                                        description=f'[bright_yellow]API: Conectando... (Lote {batch_num_val})'
+                                    )
                                 elif 'processing' in stage.lower():
-                                    logger.info(f'Processing API responses for batch {batch_num_val}')
-                                    progress.update(api_task, completed=0.6, status='[yellow]Processing...[/]')
+                                    progress.update(
+                                        api_task,
+                                        description=f'[bright_yellow]API: Processando... (Lote {batch_num_val})'
+                                    )
                                 elif 'completed' in stage.lower():
-                                    logger.info(f'API calls completed for batch {batch_num_val}')
-                                    progress.update(api_task, completed=1.0, status='[bright_blue]Done[/]')
-
+                                    progress.update(
+                                        api_task,
+                                        description=f'[bright_yellow]API: Concluído (Lote {batch_num_val})'
+                                    )
                         return progress_callback
 
                     # Create the callback with current values
@@ -542,7 +578,7 @@ def sample(
 
                     # Process the current batch
                     try:
-                        batch_results = sampler_sample(
+                        batch_results = await sampler_sample(
                             qty=current_batch_size,
                             q=None,
                             city_only=city_only,
@@ -601,12 +637,12 @@ def sample(
                     samples_completed += current_batch_size
 
                     # Mark the batch as completed
-                    progress.update(batch_task, completed=current_batch_size, status=f'[bright_yellow]Completed - Saved to {save_to_jsonl}[/]')
+                    progress.update(batch_task, completed=current_batch_size, status=f'[bright_yellow]Concluído - Salvo em {save_to_jsonl}[/]')
 
                     logger.info(f'Batch {batch_num} saved to {save_to_jsonl}')
 
                 # All batches are complete
-                progress.update(main_task, completed=qty, status='[bright_yellow]All batches completed![/]')
+                progress.update(main_task, completed=qty, status='[bright_green]Todos os lotes concluídos![/]')
                 progress.update(batch_task, visible=False)
                 if api_task:
                     progress.update(api_task, visible=False)
@@ -614,54 +650,123 @@ def sample(
                 # Show completion message
                 total_batches = (qty + batch_size - 1) // batch_size
                 logger.info(f'All {total_batches} batches completed successfully. Total samples: {qty}')
-                console.print(f'\n[bright_yellow]✓[/] {qty} samples generated successfully in {total_batches} batches!')
+                
+                # Create a beautiful completion panel with Brazilian colors
+                completion_text = [
+                    f"[bright_green]✓[/] [bright_yellow]{qty}[/] amostras geradas com sucesso em [bright_yellow]{total_batches}[/] lotes!",
+                    f"[bright_green]⏱️[/] Processamento concluído com sucesso!",
+                ]
                 if save_to_jsonl:
-                    console.print(f'[bright_yellow]✓[/] All results saved to [bright_blue]{save_to_jsonl}[/]')
+                    completion_text.append(f"[bright_green]💾[/] Todos os resultados salvos em [bright_yellow]{save_to_jsonl}[/]")
+                
+                console.print(Panel(
+                    "\n".join(completion_text),
+                    title="[bright_green]🇧🇷 Processamento Concluído[/bright_green]",
+                    border_style="bright_yellow",
+                    expand=False,
+                    padding=(1, 2)
+                ))
 
         else:
-            # Standard processing (non-batched) with progress display for larger quantities
+            # Standard processing (non-batched) with enhanced progress display
             logger.info(f'Starting standard (non-batched) processing of {qty} samples')
+            # Brazilian flag colors theme: green and yellow with blue details
             with Progress(
-                SpinnerColumn(),
-                TextColumn('[bright_blue]{task.description}'),
-                BarColumn(complete_style='bright_yellow', finished_style='blue'),
-                TaskProgressColumn(),
-                TextColumn('{task.fields[status]}'),
+                SpinnerColumn(spinner_name="dots", style="bright_yellow"),
+                TextColumn("[bright_green]{task.description}"),
+                BarColumn(complete_style='bright_green', finished_style='green', pulse_style='bright_yellow'),
+                TaskProgressColumn(style="bright_yellow"),
+                TextColumn("[blue]{task.fields[status]}[/]"),
                 console=console,
+                expand=True,
+                refresh_per_second=15  # Increase refresh rate for smoother animation
             ) as progress:
-                main_task = progress.add_task('[blue]Generating samples...', total=qty, status='')
+                main_task = progress.add_task(
+                    f"[bright_green]Gerando {qty} amostras...", 
+                    total=qty, 
+                    status="Iniciando"
+                )
 
                 # Create a task for API calls if make_api_call is true
                 api_task = None
                 if make_api_call:
-                    api_task = progress.add_task('[yellow]API calls...', visible=False, total=1.0, status='')
+                    api_task = progress.add_task(
+                        "[bright_yellow]🌐 Chamadas de API...", 
+                        visible=False, 
+                        total=1.0, 
+                        status=""
+                    )
+                
+                # Create stats task with emojis and bright colors
+                stats_task = progress.add_task(
+                    "[bright_green]📊 Estatísticas...",
+                    total=1.0,
+                    completed=1.0,
+                    visible=True,
+                    status=f"[bright_green]🌐 Modo API:[/] [{'bright_yellow' if make_api_call else 'dim blue'}]{make_api_call}[/]"
+                )
 
                 # Call the sample function with progress updates
-                def progress_callback(completed: int, stage: str | None = None) -> None:
+                async def progress_callback(completed: int, stage: str | None = None) -> None:
                     # Log significant progress stages
                     if stage and completed % max(1, qty // 10) == 0:
                         logger.debug(f'Progress: {completed}/{qty} samples - {stage}')
 
-                    # Update the main task
-                    progress.update(main_task, completed=completed, status=f'[dim blue]{stage or ""}[/]')
+                    # Calculate percentage
+                    percent = min(100, int(completed * 100 / qty))
+                    
+                    # Update the main task with percentage
+                    progress.update(
+                        main_task, 
+                        completed=completed, 
+                        status=f"[blue]{stage or ''}[/] [bright_yellow]{percent}%[/]"
+                    )
+
+                    # Update stats with current progress and emojis
+                    stats_text = [
+                        f"[bright_green]📈 Progresso:[/] [bright_yellow]{completed}[/] de [bright_yellow]{qty}[/]",
+                        f"[bright_green]🔢 Porcentagem:[/] [bright_yellow]{percent}%[/]",
+                        f"[bright_green]🌐 Modo API:[/] [{'bright_yellow' if make_api_call else 'dim blue'}]{make_api_call}[/]"
+                    ]
+                    
+                    if stage:
+                        stats_text.append(f"[bright_green]📝 Status:[/] [blue]{stage}[/]")
+                        
+                    progress.update(
+                        stats_task,
+                        visible=True,
+                        status="\n".join(stats_text)
+                    )
 
                     # Update API task if relevant
                     if api_task and stage:
                         if 'API' in stage:
                             progress.update(api_task, visible=True)
-                            if 'starting' in stage.lower():
+                            if 'starting' in stage.lower() or 'connecting' in stage.lower():
                                 logger.info('API calls starting')
-                                progress.update(api_task, completed=0.2, status='[yellow]Connecting...[/]')
+                                progress.update(
+                                    api_task, 
+                                    completed=0.2, 
+                                    status='[bright_yellow]Conectando...[/]'
+                                )
                             elif 'processing' in stage.lower():
                                 logger.info('Processing API responses')
-                                progress.update(api_task, completed=0.6, status='[yellow]Processing...[/]')
+                                progress.update(
+                                    api_task, 
+                                    completed=0.6, 
+                                    status='[bright_yellow]Processando respostas...[/]'
+                                )
                             elif 'completed' in stage.lower():
                                 logger.info('API calls completed')
-                                progress.update(api_task, completed=1.0, status='[bright_blue]Done[/]')
+                                progress.update(
+                                    api_task, 
+                                    completed=1.0, 
+                                    status='[bright_green]Concluído![/]'
+                                )
 
                 # Call the sample function from the sampler module with all parameters
                 try:
-                    all_results = sampler_sample(
+                    all_results = await sampler_sample(
                         qty=qty,
                         q=None,  # We don't use this alias in the CLI
                         city_only=city_only,
@@ -708,30 +813,41 @@ def sample(
                     raise
 
                 # Ensure progress is complete
-                progress.update(main_task, completed=qty, status='[bright_yellow]Completed![/]')
+                progress.update(main_task, completed=qty, status='[bright_green]Concluído![/]')
                 if api_task:
                     progress.update(api_task, visible=False)
 
                 # Show completion message
                 logger.info(f'Sample generation completed. Total samples: {qty}')
-                console.print('\n[bright_yellow]✓[/] Sample generation completed successfully!')
+                
+                # Create a beautiful completion panel with Brazilian colors
+                completion_text = [
+                    f"[bright_green]✓[/] [bright_yellow]{qty}[/] amostras geradas com sucesso!",
+                    f"[bright_green]⏱️[/] Processamento concluído com sucesso!",
+                ]
                 if save_to_jsonl:
-                    console.print(f'[bright_yellow]✓[/] Results saved to [bright_blue]{save_to_jsonl}[/]')
-                    logger.info(f'Results saved to {save_to_jsonl}')
+                    completion_text.append(f"[bright_green]💾[/] Resultados salvos em [bright_yellow]{save_to_jsonl}[/]")
+                
+                console.print(Panel(
+                    "\n".join(completion_text),
+                    title="[bright_green]🇧🇷 Processamento Concluído[/bright_green]",
+                    border_style="bright_yellow",
+                    expand=False,
+                    padding=(1, 2)
+                ))
     except Exception as e:
         logger.error(f'Error in sample generation: {e}')
         console.print(f'[red]Error: {e!s}[/red]')
-        raise typer.Exit(code=1) from e
+        raise Exit(code=1) from e
 
-
-def main() -> None:
+async def main() -> None:
     """Entry point for the CLI application.
 
     This function serves as the main entry point for the command-line interface.
-    It initializes and runs the Typer application with all configured commands
+    It initializes and runs the AsyncTyper application with all configured commands
     and options.
     """
-    app()
+    await app()
 
 
 if __name__ == '__main__':
@@ -746,4 +862,8 @@ if __name__ == '__main__':
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
-    main()
+    # Install uvloop as the default event loop policy
+    uvloop.install()
+    
+    # Run the main function with the uvloop event loop
+    asyncio.run(main())
